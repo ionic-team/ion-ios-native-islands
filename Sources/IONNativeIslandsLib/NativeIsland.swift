@@ -37,7 +37,7 @@ public protocol TouchObserverView: AnyObject {
 }
 
 public extension NativeIsland {
-    /// OVERLAY island (§6.1): the view composites ABOVE the WebView (glass sheet) instead of
+    /// OVERLAY island: the view composites ABOVE the WebView (glass sheet) instead of
     /// behind it. A TYPE-level property — the container places the host at registration.
     var overlay: Bool { false }
     /// BATTERY: the container reports when the island's rect enters/leaves the viewport — islands

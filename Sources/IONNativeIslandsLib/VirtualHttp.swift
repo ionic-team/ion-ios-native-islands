@@ -2,7 +2,7 @@
 import Foundation
 import WebKit
 
-/// T1 — virtual HTTP (docs/ARCHITECTURE.md §5.5): the web calls standard `fetch()`, native intercepts in-process
+/// T1 — virtual HTTP: the web calls standard `fetch()`, native intercepts in-process
 /// via a custom scheme handler. No socket, no port, request/response-native — and every call shows up
 /// in the DevTools/Web-Inspector **Network panel** with status, timing, and response body (the
 /// debuggability the message-handler bridge can never give you).
@@ -11,7 +11,7 @@ import WebKit
 /// that asymmetry, not iOS, sets the floor):
 ///   POST ni://bridge/v1/command     headers: x-ni-island, x-ni-method, x-ni-params (base64 UTF-8 JSON)
 ///                                   → 200 {"value": …}
-///   GET  ni://bridge/v1/ping        → 200 echo diagnostics: header/body delivery evidence (the §5.5
+///   GET  ni://bridge/v1/ping        → 200 echo diagnostics: header/body delivery evidence (the
 ///                                   spike data: does the scheme handler deliver headers? POST bodies?)
 ///   OPTIONS *                       → 204 + CORS (the page origin is capacitor://localhost, so every
 ///                                   fetch here is cross-origin and preflights)
@@ -41,7 +41,7 @@ public final class NIVirtualHttpHandler: NSObject, WKURLSchemeHandler {
         let method = req.httpMethod ?? "GET"
         var headers: [String: String] = [:]
         for (k, v) in req.allHTTPHeaderFields ?? [:] { headers[k.lowercased()] = v }
-        let body = req.httpBody // §5.5 spike: observe whether WebKit delivers this at all
+        let body = req.httpBody // spike: observe whether WebKit delivers this at all
 
         if let origin = headers["origin"], !NIVirtualHttp.allowedOrigins.contains(origin) {
             respond(urlSchemeTask, status: 403, headers: ["Content-Type": "application/json"],

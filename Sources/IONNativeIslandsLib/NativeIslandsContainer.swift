@@ -7,7 +7,7 @@ import IONNativeIslandsCore
 
 /// Document-space rectangle (mirrors the web `Rect`): document coordinates + an
 /// optional corner radius for the opaque-region path. Native derives the on-screen
-/// position by subtracting the live scroll offset (docs/ARCHITECTURE.md §5.2).
+/// position by subtracting the live scroll offset.
 public struct IslandRect {
     public var x: CGFloat
     public var y: CGFloat
@@ -26,7 +26,7 @@ public struct IslandComponent {
     public var z: Int
     public var interactive: Bool
     public var active: Bool
-    /// Composites ABOVE the WebView (overlay island, §6.1 — e.g. the native glass sheet).
+    /// Composites ABOVE the WebView (overlay island, e.g. the native glass sheet).
     public var overlay: Bool
     /// `rect` is in VIEWPORT coords (fixed/sticky web ancestry) — pin, never translate.
     public var fixedPos: Bool
@@ -57,7 +57,7 @@ public struct IslandAnimationTrack {
 /// transparent WKWebView -> (the app's own chrome). The container:
 ///   - positions island host views in document space and repositions them on scroll
 ///     by a **pure translation** (KVO on the public `scrollView.contentOffset` — the
-///     only WKWebView internal we touch, §2.1), so **scroll never crosses the bridge**;
+///     only WKWebView internal we touch), so **scroll never crosses the bridge**;
 ///   - hit-tests touch-down to route a gesture to an island or the WebView (Sentinel).
 public final class NativeIslandsContainer: UIView {
 
@@ -76,7 +76,7 @@ public final class NativeIslandsContainer: UIView {
     /// island id -> document rects of web/native stacked above it (hit-test exclusions).
     private var excludeDoc: [String: [IslandRect]] = [:]
     /// ids of islands that own input; a non-interactive island (e.g. a camera viewfinder)
-    /// passes touches to the WebView so web content over it (stickers/captions) is interactive (§5.4).
+    /// passes touches to the WebView so web content over it (stickers/captions) is interactive.
     private var interactiveIds: Set<String> = []
     private var order: [String] = []
     /// Islands live HERE — inside webView.scrollView at index 0 (public API), anchored at
@@ -84,7 +84,7 @@ public final class NativeIslandsContainer: UIView {
     /// KVO chase, no ≤1-frame hole↔host lag, no scroll flash (iPhone report, 2026-07-04).
     /// Non-clipping 1×1 view so we never track contentSize.
     private let docLayer = UIView()
-    /// OVERLAY islands (§6.1) live HERE — a container-level layer ABOVE the WebView. Touch-inert
+    /// OVERLAY islands live HERE — a container-level layer ABOVE the WebView. Touch-inert
     /// (glass is pass-through decoration); in-flow overlay hosts are translated per scroll tick
     /// (the demo1 glass mechanism), fixed ones are pinned to viewport coords and never move.
     private let overlayLayer = UIView()
@@ -168,7 +168,7 @@ public final class NativeIslandsContainer: UIView {
         docLayer.layer.position = .zero
         webView.scrollView.insertSubview(docLayer, at: 0)
 
-        // The overlay layer sits ABOVE the WebView (the §6.1 fourth layer). Touch-inert as a
+        // The overlay layer sits ABOVE the WebView (the fourth layer). Touch-inert as a
         // whole: overlay islands are pass-through decoration, so hitTest falls to the WebView.
         overlayLayer.frame = bounds
         overlayLayer.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -338,7 +338,7 @@ public final class NativeIslandsContainer: UIView {
                 fixedRects[component.id] = nil
                 continue
             }
-            // OVERLAY hosts (§6.1) live above the WebView in container coords. Fixed ones pin to
+            // OVERLAY hosts live above the WebView in container coords. Fixed ones pin to
             // the viewport rect the web sent and never move; in-flow ones store the doc rect and
             // ride trackScroll (the demo1 glass mechanism — interaction-rate, blur hides ≤1 frame).
             if overlayIds.contains(component.id) {
@@ -362,7 +362,7 @@ public final class NativeIslandsContainer: UIView {
             host.isHidden = false
             // Frame carries the DOCUMENT position — the host lives in docLayer inside the
             // scroll view, so scrolling needs no further work (compositor-synced).
-            // §4.2 bleed epsilon: the native host extends 1 CSS px past the ledger rect on every side,
+            // bleed epsilon: the native host extends 1 CSS px past the ledger rect on every side,
             // so the anti-aliased edge of the web clip-hole never exposes the void as a hairline rim
             // (the "slight black margin" owner report). Hit-testing/reposition still use the exact rect.
             host.transform = .identity
@@ -396,14 +396,14 @@ public final class NativeIslandsContainer: UIView {
     }
 
     /// Drag fast-path: update only the given islands' doc positions + retranslate. No re-size /
-    /// re-order / exclude recompute — keeps a finger-tracked island smooth (§5.1).
+    /// re-order / exclude recompute — keeps a finger-tracked island smooth.
     public func reposition(_ moves: [String: CGPoint]) {
         for (id, pos) in moves {
             guard var r = docRects[id], let host = hosts[id] else { continue }
             r.x = pos.x; r.y = pos.y
             docRects[id] = r
             host.transform = .identity
-            // Same §4.2 bleed as applyLedger (frames must agree between the two paths).
+            // Same bleed as applyLedger (frames must agree between the two paths).
             host.frame = CGRect(x: pxRound(r.x) - 1, y: pxRound(r.y) - 1, width: pxRound(r.w) + 2, height: pxRound(r.h) + 2)
         }
         if let webView = webView { trackScroll(webView.scrollView.contentOffset) }
@@ -464,7 +464,7 @@ public final class NativeIslandsContainer: UIView {
         animationTracks.removeAll()
     }
 
-    /// Effects interlayer (§5.3): insert/position a native blur BETWEEN the islands and the
+    /// Effects interlayer: insert/position a native blur BETWEEN the islands and the
     /// WebView, beneath a web effect layer (e.g. the frosted card), so it blurs the live
     /// island behind it — backdrop-blur over a real platform view. Tracks scroll like an island.
     public func applyGlass(_ rects: [IslandRect]) {
@@ -515,7 +515,7 @@ public final class NativeIslandsContainer: UIView {
     /// Hot path: one transform write per visible island per scroll tick. The frame
     /// already holds the document position, so the transform is purely the scroll
     /// offset — it never reads `frame`, so transformed frames stay valid.
-    /// BATTERY (debrief §3): islands with live sensors (camera/AR) pause them offscreen. The container
+    /// BATTERY: islands with live sensors (camera/AR) pause them offscreen. The container
     /// is the one place that knows every host's on-screen rect each scroll frame; it reports CHANGES only.
     public var onIslandVisibility: ((String, Bool) -> Void)?
     private var visibleIds = Set<String>()
@@ -641,7 +641,7 @@ public final class NativeIslandsContainer: UIView {
             guard let rect = screenRect(id, offset: offset), rect.contains(point) else { continue }
             // The topmost island here occludes those below, so we decide at it and stop.
             // A NON-interactive island (e.g. a camera viewfinder) passes the touch to the
-            // WebView so web content above it (stickers/captions/buttons) stays interactive (§5.4).
+            // WebView so web content above it (stickers/captions/buttons) stays interactive.
             let z = webView.scrollView.zoomScale
             let excluded = (excludeDoc[id] ?? []).contains { ex in
                 NIContainerGeometry.screenRect(

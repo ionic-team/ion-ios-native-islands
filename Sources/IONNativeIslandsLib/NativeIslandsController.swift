@@ -453,7 +453,7 @@ public final class NativeIslandsController {
         return "\(scheme)://\(host)"
     }
 
-    // MARK: T1 virtual HTTP (§5.5, opt-in)
+    // MARK: virtual HTTP (opt-in)
 
     /// Route `fetch('ni://bridge/v1/…')` into the dispatcher. Command params ride HEADERS
     /// (base64 JSON) because Android's interceptor cannot read bodies — one protocol, two
