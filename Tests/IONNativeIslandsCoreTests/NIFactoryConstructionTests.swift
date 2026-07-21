@@ -1,5 +1,5 @@
 import XCTest
-@testable import IONNativeIslandsCore
+@testable import IONNativeIslandsLib
 
 final class NIFactoryConstructionTests: XCTestCase {
     private enum FixtureError: Error { case construction }

@@ -1,84 +1,95 @@
-import Foundation
-
-public struct NIPendingCommand<Payload> {
-    public let method: String
-    public let payload: Payload
-
-    public init(method: String, payload: Payload) {
-        self.method = method
-        self.payload = payload
-    }
+internal struct NIPendingCommand<Payload> {
+    let method: String
+    let payload: Payload
 }
 
-/// Main-queue-confined island identity and pre-mount command state.
-///
-/// The policy lives outside the Capacitor bridge so navigation/reset behavior is deterministic and
-/// testable without UIKit or a WebView.
-public final class NIIslandLifecycleState<Payload> {
+internal enum NITypeRegistrationResult: Equatable {
+    case registered
+    case matched
+    case typeMismatch
+    case capacityExceeded
+}
+
+internal enum NIPendingCommandResult: Equatable {
+    case buffered
+    case pendingIDLimitExceeded
+    case pendingCommandLimitExceeded
+}
+
+internal final class NIIslandLifecycleState<Payload> {
+    static var maxTrackedTypes: Int { 256 }
+    static var maxPendingIDs: Int { 64 }
+    static var maxPendingCommandsPerID: Int { 32 }
+
     private var types: [String: String] = [:]
     private var pending: [String: [NIPendingCommand<Payload>]] = [:]
     private var errored: Set<String> = []
-    private var awaitingAdoption: Set<String> = []
 
-    public init() {}
-
-    public func type(for id: String) -> String? { types[id] }
-
-    /// Registers an id/type pair without ever allowing an existing id to change type.
-    @discardableResult
-    public func registerType(id: String, type: String) -> Bool {
-        if let existing = types[id] { return existing == type }
-        types[id] = type
-        return true
+    func type(for id: String) -> String? {
+        types[id]
     }
 
-    public func removeType(id: String) {
+    func registerType(id: String, type: String) -> NITypeRegistrationResult {
+        if let existing = types[id] {
+            return existing == type ? .matched : .typeMismatch
+        }
+        guard types.count < Self.maxTrackedTypes else {
+            return .capacityExceeded
+        }
+        types[id] = type
+        return .registered
+    }
+
+    func removeType(id: String) {
         types[id] = nil
         pending[id] = nil
         errored.remove(id)
-        awaitingAdoption.remove(id)
     }
 
-    public func buffer(id: String, method: String, payload: Payload) {
-        pending[id, default: []].append(NIPendingCommand(method: method, payload: payload))
+    func retain(ids: Set<String>) {
+        types = types.filter { ids.contains($0.key) }
+        pending = pending.filter { ids.contains($0.key) }
+        errored.formIntersection(ids)
     }
 
-    public func drain(id: String) -> [NIPendingCommand<Payload>] {
+    func buffer(
+        id: String,
+        method: String,
+        payload: Payload
+    ) -> NIPendingCommandResult {
+        if pending[id] == nil, pending.count >= Self.maxPendingIDs {
+            return .pendingIDLimitExceeded
+        }
+        if pending[id, default: []].count >= Self.maxPendingCommandsPerID {
+            return .pendingCommandLimitExceeded
+        }
+        pending[id, default: []].append(
+            NIPendingCommand(method: method, payload: payload)
+        )
+        return .buffered
+    }
+
+    func drain(id: String) -> [NIPendingCommand<Payload>] {
         defer { pending[id] = nil }
         return pending[id] ?? []
     }
 
-    /// Returns true only for the first report in the current page lifetime.
-    @discardableResult
-    public func markErrored(id: String) -> Bool {
+    func markErrored(id: String) -> Bool {
         pending[id] = nil
         return errored.insert(id).inserted
     }
 
-    public func isErrored(id: String) -> Bool { errored.contains(id) }
-
-    public func markAwaitingAdoption(id: String) {
-        if types[id] != nil { awaitingAdoption.insert(id) }
+    func isErrored(id: String) -> Bool {
+        errored.contains(id)
     }
 
-    /// Returns true once when a paused persistent island is adopted by a new ledger.
-    public func consumeAdoption(id: String) -> Bool {
-        awaitingAdoption.remove(id) != nil
-    }
-
-    public func isAwaitingAdoption(id: String) -> Bool { awaitingAdoption.contains(id) }
-
-    public func reset(keeping ids: Set<String> = []) {
-        types = types.filter { ids.contains($0.key) }
-        pending.removeAll()
-        errored.removeAll()
-        awaitingAdoption = ids.intersection(Set(types.keys))
-    }
-
-    public func clear() {
+    func reset() {
         types.removeAll()
         pending.removeAll()
         errored.removeAll()
-        awaitingAdoption.removeAll()
+    }
+
+    func clear() {
+        reset()
     }
 }

@@ -1,156 +1,184 @@
 import XCTest
-@testable import IONNativeIslandsCore
+@testable import IONNativeIslandsLib
 
 final class NIBridgeSecurityTests: XCTestCase {
-    func testCanonicalWireGoldenVectors() throws {
-        for vector in NIGoldenVectors.all {
-            let decoded = try NIWireCodec.decode(Data(vector.input.utf8))
-            XCTAssertEqual(try NIWireCodec.encodeString(decoded), vector.canonical, vector.name)
+    private let security = NIBridgeSecurity()
+
+    func testAcceptsFixedCreateAndUpdateCommands() {
+        for method in ["create", "update"] {
+            XCTAssertNoThrow(
+                try security.validateCommand(
+                    version: NIBridgeSecurity.protocolVersion,
+                    island: "map-1",
+                    type: "acme.map",
+                    method: method,
+                    params: ["zoom": 4]
+                )
+            )
         }
     }
 
-    private func subject(permissions: [String] = ["map.control", "layout.control"]) -> NIBridgeSecurity {
-        NIBridgeSecurity(
-            origins: ["capacitor://localhost"],
-            capabilities: ["maps"],
-            permissions: permissions)
-    }
-
-    func testAcceptsRegisteredCommand() throws {
-        XCTAssertNoThrow(try subject().validateCommand(
-            version: 2, contractDigest: NIBridgeSecurity.contractDigest,
-            island: "map-1", type: "map", method: "setCamera",
-            params: ["lat": 1.0], origin: "capacitor://localhost",
-            customCommands: ["create", "setCamera", "panTo"], customCapability: "maps",
-                customPermission: "map.control"))
-    }
-
-    func testRejectsOriginPermissionUnknownCommandAndOversizedPayload() {
-        assertCode("permission_denied") {
-            try subject().validateCommand(
-                version: 2, contractDigest: NIBridgeSecurity.contractDigest,
-                island: "map-1", type: "map", method: "setCamera",
-                params: [:], origin: "https://evil.example",
-                customCommands: ["create", "setCamera", "panTo"], customCapability: "maps",
-                customPermission: "map.control")
-        }
-        assertCode("permission_denied") {
-            try subject(permissions: []).validateCommand(
-                version: 2, contractDigest: NIBridgeSecurity.contractDigest,
-                island: "map-1", type: "map", method: "setCamera",
-                params: [:], origin: "capacitor://localhost",
-                customCommands: ["create", "setCamera", "panTo"], customCapability: "maps",
-                customPermission: "map.control")
-        }
+    func testRejectsUnknownCommand() {
         assertCode("unknown_command") {
-            try subject().validateCommand(
-                version: 2, contractDigest: NIBridgeSecurity.contractDigest,
-                island: "map-1", type: "map", method: "erase",
-                params: [:], origin: "capacitor://localhost",
-                customCommands: ["create", "setCamera", "panTo"], customCapability: "maps",
-                customPermission: "map.control")
-        }
-        assertCode("payload_too_large") {
-            try subject().validateCommand(
-                version: 2, contractDigest: NIBridgeSecurity.contractDigest,
-                island: "map-1", type: "map", method: "setCamera",
-                params: ["blob": String(repeating: "x", count: NIBridgeSecurity.maxRequestBytes)],
-                origin: "capacitor://localhost",
-                customCommands: ["create", "setCamera", "panTo"], customCapability: "maps",
-                customPermission: "map.control")
+            try self.security.validateCommand(
+                version: NIBridgeSecurity.protocolVersion,
+                island: "map-1",
+                type: "acme.map",
+                method: "capture",
+                params: [:]
+            )
         }
     }
 
-    func testOperationGateUsesSameOriginPermissionAndSizePolicy() throws {
-        XCTAssertNoThrow(try subject().validateOperation(
-            "applyLayout", payload: ["protocolVersion": 2, "contractDigest": NIBridgeSecurity.contractDigest,
-                                     "components": []], origin: "capacitor://localhost",
-            permission: "layout.control"))
-        assertCode("permission_denied") {
-            try self.subject(permissions: []).validateOperation(
-                "applyLayout", payload: ["protocolVersion": 2, "contractDigest": NIBridgeSecurity.contractDigest],
-                origin: "capacitor://localhost",
-                permission: "layout.control")
-        }
-    }
-
-    func testRegistryPermissionChainAndProtocolVersionFailClosed() throws {
-        // Island policy rides the registration entry: the per-command override outranks the
-        // type permission, and both outrank the custom.<type>.command default.
-        let chain = NIBridgeSecurity(
-            origins: ["capacitor://localhost"],
-            capabilities: ["camera"],
-            permissions: ["camera.view"])
-        XCTAssertNoThrow(try chain.validateCommand(
-            version: 2, contractDigest: NIBridgeSecurity.contractDigest,
-            island: "cam-1", type: "camera", method: "start", params: [:],
-            origin: "capacitor://localhost",
-            customCommands: ["start", "capture"], customCapability: "camera",
-            customPermission: "camera.view",
-            customCommandPermissions: ["camera.capture": "camera.capture"]))
-        assertCode("permission_denied") {
-            try chain.validateCommand(
-                version: 2, contractDigest: NIBridgeSecurity.contractDigest,
-                island: "cam-1", type: "camera", method: "capture", params: [:],
-                origin: "capacitor://localhost",
-                customCommands: ["start", "capture"], customCapability: "camera",
-                customPermission: "camera.view",
-                customCommandPermissions: ["camera.capture": "camera.capture"])
-        }
-        assertCode("unsupported_version") {
-            try self.subject().validateCommand(
-                version: NIBridgeSecurity.protocolVersion + 1,
-                contractDigest: NIBridgeSecurity.contractDigest,
-                island: "map-1", type: "map", method: "setCamera",
-                params: [:], origin: "capacitor://localhost",
-                customCommands: ["create", "setCamera", "panTo"], customCapability: "maps",
-                customPermission: "map.control")
-        }
-        assertCode("unsupported_version") {
-            try self.subject().validateCommand(
-                version: NIBridgeSecurity.protocolVersion, contractDigest: "stale",
-                island: "map-1", type: "map", method: "setCamera",
-                params: [:], origin: "capacitor://localhost",
-                customCommands: ["create", "setCamera", "panTo"], customCapability: "maps",
-                customPermission: "map.control")
-        }
-    }
-
-    func testCustomFactoryPolicyAndResponseLimitsFailClosed() throws {
-        let custom = NIBridgeSecurity(
-            origins: ["capacitor://localhost"],
-            capabilities: ["custom.fixture"],
-            permissions: ["custom.fixture.command"])
-        XCTAssertNoThrow(try custom.validateCommand(
-            version: 2, contractDigest: NIBridgeSecurity.contractDigest,
-            island: "fixture-1", type: "fixture", method: "setTheme", params: [:],
-            origin: "capacitor://localhost", customCommands: ["create", "setTheme"],
-            customCapability: "custom.fixture"))
-        assertCode("unknown_command") {
-            try custom.validateCommand(
-                version: 2, contractDigest: NIBridgeSecurity.contractDigest,
-                island: "fixture-1", type: "fixture", method: "erase", params: [:],
-                origin: "capacitor://localhost", customCommands: ["create", "setTheme"],
-                customCapability: "custom.fixture")
+    func testRejectsMalformedIdentifiersAndNonJSONPayloads() {
+        assertCode("invalid_request") {
+            try self.security.validateCommand(
+                version: NIBridgeSecurity.protocolVersion,
+                island: "bad id!",
+                type: "acme.map",
+                method: "create",
+                params: [:]
+            )
         }
         assertCode("invalid_request") {
-            try custom.validateCommand(
-                version: 2, contractDigest: NIBridgeSecurity.contractDigest,
-                island: "bad id!", type: "fixture", method: "create", params: [:],
-                origin: "capacitor://localhost", customCommands: ["create"],
-                customCapability: "custom.fixture")
-        }
-        assertCode("internal_error") {
-            try custom.validateResponse(["value": Date()])
-        }
-        assertCode("payload_too_large") {
-            try custom.validateResponse([
-                "value": String(repeating: "x", count: NIBridgeSecurity.maxResponseBytes)
-            ])
+            try self.security.validateCommand(
+                version: NIBridgeSecurity.protocolVersion,
+                island: "map-1",
+                type: "acme.map",
+                method: "update",
+                params: ["value": Date()]
+            )
         }
     }
 
-    private func assertCode(_ code: String, _ action: () throws -> Void) {
+    func testRejectsMismatchedVersion() {
+        assertCode("unsupported_version") {
+            try self.security.validateVersion(
+                NIBridgeSecurity.protocolVersion + 1
+            )
+        }
+    }
+
+    func testOperationPayloadIsSizeBounded() {
+        assertCode("payload_too_large") {
+            try self.security.validateOperation(
+                "applyLayout",
+                payload: [
+                    "protocolVersion": NIBridgeSecurity.protocolVersion,
+                    "value": String(repeating: "x", count: 64),
+                ],
+                maxBytes: 32
+            )
+        }
+    }
+
+    func testFrozenOperationByteBoundAcceptsExactLimit() throws {
+        let empty: [String: Any] = [
+            "protocolVersion": NIBridgeSecurity.protocolVersion,
+            "value": "",
+        ]
+        let emptyBytes = try JSONSerialization.data(
+            withJSONObject: empty
+        ).count
+        let exact: [String: Any] = [
+            "protocolVersion": NIBridgeSecurity.protocolVersion,
+            "value": String(
+                repeating: "x",
+                count: NIBridgeSecurity.maxRequestBytes - emptyBytes
+            ),
+        ]
+        XCTAssertEqual(
+            try JSONSerialization.data(withJSONObject: exact).count,
+            NIBridgeSecurity.maxRequestBytes
+        )
+        XCTAssertNoThrow(
+            try security.validateOperation("reset", payload: exact)
+        )
+
+        var tooLarge = exact
+        tooLarge["value"] = String(
+            repeating: "x",
+            count: NIBridgeSecurity.maxRequestBytes - emptyBytes + 1
+        )
+        assertCode("payload_too_large") {
+            try self.security.validateOperation("reset", payload: tooLarge)
+        }
+    }
+
+    func testLayoutBudgetIsSeparateAndBounded() {
+        let overCommandBudget: [String: Any] = [
+            "protocolVersion": NIBridgeSecurity.protocolVersion,
+            "value": String(
+                repeating: "x",
+                count: NIBridgeSecurity.maxRequestBytes
+            ),
+        ]
+        XCTAssertNoThrow(
+            try security.validateOperation(
+                "applyLayout",
+                payload: overCommandBudget,
+                maxBytes: NIBridgeSecurity.maxLayoutBytes
+            )
+        )
+
+        let overLayoutBudget: [String: Any] = [
+            "protocolVersion": NIBridgeSecurity.protocolVersion,
+            "value": String(
+                repeating: "x",
+                count: NIBridgeSecurity.maxLayoutBytes
+            ),
+        ]
+        assertCode("payload_too_large") {
+            try self.security.validateOperation(
+                "applyLayout",
+                payload: overLayoutBudget,
+                maxBytes: NIBridgeSecurity.maxLayoutBytes
+            )
+        }
+    }
+
+    func testRejectsMalformedOperationVersionWithoutBoolCoercion() {
+        for version: Any in [true, 1.5, "1"] {
+            assertCode("unsupported_version") {
+                try self.security.validateOperation(
+                    "applyLayout",
+                    payload: ["protocolVersion": version]
+                )
+            }
+        }
+    }
+
+    func testJSONDepthIsBoundedAt32() {
+        XCTAssertNoThrow(
+            try security.validateCommand(
+                version: NIBridgeSecurity.protocolVersion,
+                island: "map-1",
+                type: "acme.map",
+                method: "update",
+                params: ["value": nestedJSON(depth: 31)]
+            )
+        )
+        assertCode("invalid_request") {
+            try self.security.validateCommand(
+                version: NIBridgeSecurity.protocolVersion,
+                island: "map-1",
+                type: "acme.map",
+                method: "update",
+                params: ["value": self.nestedJSON(depth: 32)]
+            )
+        }
+    }
+
+    private func nestedJSON(depth: Int) -> Any {
+        (0..<depth).reduce("leaf" as Any) { value, _ in
+            ["child": value]
+        }
+    }
+
+    private func assertCode(
+        _ code: String,
+        _ action: () throws -> Void
+    ) {
         XCTAssertThrowsError(try action()) { error in
             XCTAssertEqual((error as? NIBridgeSecurityError)?.code, code)
         }

@@ -1,5 +1,5 @@
 import XCTest
-@testable import IONNativeIslandsCore
+@testable import IONNativeIslandsLib
 
 final class NISystemGestureInsetsTests: XCTestCase {
     private let insets = NISystemGestureInsets(left: 20, top: 4, right: 12, bottom: 24)

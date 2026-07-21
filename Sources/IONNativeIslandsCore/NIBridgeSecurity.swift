@@ -1,142 +1,177 @@
+import CoreFoundation
 import Foundation
 
-public struct NIBridgeSecurityError: Error {
-    public let code: String
-    public let message: String
+internal struct NIBridgeSecurityError: Error {
+    let code: String
+    let message: String
 
-    public init(_ code: String, _ message: String) {
+    init(_ code: String, _ message: String) {
         self.code = code
         self.message = message
     }
 }
 
-/// Authoritative native command gate. Web validation is useful feedback; this gate is the
-/// security boundary because page JavaScript is not trusted to police itself.
-public final class NIBridgeSecurity {
-    public static let protocolVersion = NIBridgeContract.protocolVersion
-    public static let contractDigest = NIBridgeContract.contractDigest
-    public static let maxRequestBytes = NIBridgeContract.maxRequestBytes
-    public static let maxResponseBytes = NIBridgeContract.maxResponseBytes
-    public static let maxIdentifierBytes = NIBridgeContract.maxIdentifierBytes
-    public static let maxCommandBytes = NIBridgeContract.maxCommandBytes
+internal final class NIBridgeSecurity {
+    static let protocolVersion = NIBridgeContract.protocolVersion
+    static let maxRequestBytes = NIBridgeContract.maxRequestBytes
+    static let maxLayoutBytes = NIBridgeContract.maxLayoutBytes
+    static let maxIdentifierBytes = NIBridgeContract.maxIdentifierBytes
+    static let maxCommandBytes = NIBridgeContract.maxCommandBytes
 
-    private static let identifier = try! NSRegularExpression(pattern: "^[A-Za-z_][A-Za-z0-9._:-]*$")
-    private static let command = try! NSRegularExpression(pattern: "^[A-Za-z][A-Za-z0-9._-]*$")
+    init() {}
 
-    private let origins: Set<String>
-    private let capabilities: Set<String>
-    private let permissions: Set<String>
-
-    public init(origins: [String], capabilities: [String], permissions: [String]) {
-        self.origins = Set(origins)
-        self.capabilities = Set(capabilities)
-        self.permissions = Set(permissions)
+    func validateActivation(type: String) throws {
+        try validateToken(
+            type,
+            kind: "native component type",
+            maxBytes: Self.maxIdentifierBytes,
+            pattern: "^[A-Za-z_][A-Za-z0-9._:-]*$"
+        )
     }
 
-    public func validateActivation(type: String, origin: String?, customCapability: String? = nil) throws {
-        try validateToken(type, kind: "island type", maxBytes: Self.maxIdentifierBytes, expression: Self.identifier)
-        try validateOrigin(origin)
-        let capability = customCapability ?? NIBridgeContract.capabilities[type] ?? "custom.\(type)"
-        guard capabilities.contains(capability) else {
-            throw NIBridgeSecurityError("permission_denied", "capability '\(capability)' is not enabled")
-        }
-    }
-
-    public func validateCommand(version: Int, contractDigest: String, island: String, type: String, method: String, params: [String: Any],
-                         origin: String?, customCommands: Set<String>? = nil,
-                         customCapability: String? = nil,
-                         customPermission: String? = nil,
-                         customCommandPermissions: [String: String]? = nil) throws {
+    func validateCommand(
+        version: Int,
+        island: String,
+        type: String,
+        method: String,
+        params: [String: Any]
+    ) throws {
         try validateVersion(version)
-        try validateContract(contractDigest)
-        try validateToken(island, kind: "island id", maxBytes: Self.maxIdentifierBytes, expression: Self.identifier)
-        try validateToken(method, kind: "command", maxBytes: Self.maxCommandBytes, expression: Self.command)
-        try validateActivation(type: type, origin: origin, customCapability: customCapability)
-
-        let allowed = customCommands ?? NIBridgeContract.commands[type]
-        guard allowed?.contains(method) == true else {
-            throw NIBridgeSecurityError("unknown_command", "'\(method)' is not registered for island type '\(type)'")
+        try validateToken(
+            island,
+            kind: "native component id",
+            maxBytes: Self.maxIdentifierBytes,
+            pattern: "^[A-Za-z_][A-Za-z0-9._:-]*$"
+        )
+        try validateToken(
+            method,
+            kind: "command",
+            maxBytes: Self.maxCommandBytes,
+            pattern: "^[A-Za-z][A-Za-z0-9._-]*$"
+        )
+        try validateActivation(type: type)
+        guard method == "create" || method == "update" else {
+            throw NIBridgeSecurityError(
+                "unknown_command",
+                "'\(method)' is not a supported native component command"
+            )
         }
-
-        let permission = customCommandPermissions?["\(type).\(method)"]
-            ?? NIBridgeContract.commandPermissions["\(type).\(method)"]
-            ?? customPermission
-            ?? NIBridgeContract.permissions[type]
-            ?? "custom.\(type).command"
-        guard permissions.contains(permission) else {
-            throw NIBridgeSecurityError("permission_denied", "command '\(type).\(method)' requires '\(permission)'")
+        guard isJSONValue(params) else {
+            throw NIBridgeSecurityError(
+                "invalid_request",
+                "command params must be JSON-compatible"
+            )
         }
-
-        guard JSONSerialization.isValidJSONObject(params) else {
-            throw NIBridgeSecurityError("invalid_request", "command params must be JSON-compatible")
-        }
-        let data: Data
-        do { data = try JSONSerialization.data(withJSONObject: params) }
-        catch { throw NIBridgeSecurityError("invalid_request", "command params could not be encoded") }
+        let data = try JSONSerialization.data(withJSONObject: params)
         guard data.count <= Self.maxRequestBytes else {
-            throw NIBridgeSecurityError("payload_too_large", "payload \(data.count)B exceeds \(Self.maxRequestBytes)B")
+            throw NIBridgeSecurityError(
+                "payload_too_large",
+                "payload \(data.count)B exceeds \(Self.maxRequestBytes)B"
+            )
         }
     }
 
-    public func validateResponse(_ result: [String: Any]) throws {
-        guard JSONSerialization.isValidJSONObject(result),
-              let data = try? JSONSerialization.data(withJSONObject: result) else {
-            throw NIBridgeSecurityError("internal_error", "native response is not JSON-compatible")
+    func validateOperation(
+        _ operation: String,
+        payload: [String: Any],
+        maxBytes: Int = maxRequestBytes
+    ) throws {
+        guard let version = strictInteger(payload["protocolVersion"]) else {
+            throw NIBridgeSecurityError(
+                "unsupported_version",
+                "bridge protocol is invalid; native expects \(Self.protocolVersion)"
+            )
         }
-        guard data.count <= Self.maxResponseBytes else {
-            throw NIBridgeSecurityError("payload_too_large", "response \(data.count)B exceeds \(Self.maxResponseBytes)B")
+        try validateVersion(version)
+        try validateToken(
+            operation,
+            kind: "operation",
+            maxBytes: Self.maxCommandBytes,
+            pattern: "^[A-Za-z][A-Za-z0-9._-]*$"
+        )
+        guard isJSONValue(payload) else {
+            throw NIBridgeSecurityError(
+                "invalid_request",
+                "operation payload must be JSON-compatible"
+            )
         }
-    }
-
-    public func validateOperation(_ operation: String, payload: [String: Any], origin: String?,
-                           permission: String, maxBytes: Int = maxRequestBytes) throws {
-        try validateVersion((payload["protocolVersion"] as? NSNumber)?.intValue ?? -1)
-        try validateContract(payload["contractDigest"] as? String ?? "")
-        try validateToken(operation, kind: "operation", maxBytes: Self.maxCommandBytes, expression: Self.command)
-        try validateOrigin(origin)
-        guard permissions.contains(permission) else {
-            throw NIBridgeSecurityError("permission_denied", "operation '\(operation)' requires '\(permission)'")
-        }
-        guard JSONSerialization.isValidJSONObject(payload),
-              let data = try? JSONSerialization.data(withJSONObject: payload) else {
-            throw NIBridgeSecurityError("invalid_request", "operation payload must be JSON-compatible")
-        }
+        let data = try JSONSerialization.data(withJSONObject: payload)
         guard data.count <= maxBytes else {
-            throw NIBridgeSecurityError("payload_too_large", "payload \(data.count)B exceeds \(maxBytes)B")
+            throw NIBridgeSecurityError(
+                "payload_too_large",
+                "payload \(data.count)B exceeds \(maxBytes)B"
+            )
         }
     }
 
-    public func validateVersion(_ version: Int) throws {
+    func validateVersion(_ version: Int) throws {
         guard version == Self.protocolVersion else {
             throw NIBridgeSecurityError(
                 "unsupported_version",
-                "bridge protocol \(version) is unsupported; native expects \(Self.protocolVersion)")
+                "bridge protocol \(version) is unsupported; native expects \(Self.protocolVersion)"
+            )
         }
     }
 
-    public func validateContract(_ digest: String) throws {
-        guard digest == Self.contractDigest else {
-            throw NIBridgeSecurityError(
-                "unsupported_version",
-                "bridge contract digest mismatch; run cap sync with matching web and native packages")
-        }
-    }
-
-    private func validateOrigin(_ origin: String?) throws {
-        guard let origin = origin, !origin.isEmpty else {
-            throw NIBridgeSecurityError("permission_denied", "missing web origin")
-        }
-        guard origins.contains(origin) else {
-            throw NIBridgeSecurityError("permission_denied", "origin '\(origin)' is not allowed")
-        }
-    }
-
-    private func validateToken(_ value: String, kind: String, maxBytes: Int,
-                               expression: NSRegularExpression) throws {
-        let range = NSRange(value.startIndex..<value.endIndex, in: value)
-        guard !value.isEmpty, value.utf8.count <= maxBytes,
-              expression.firstMatch(in: value, range: range)?.range == range else {
+    private func validateToken(
+        _ value: String,
+        kind: String,
+        maxBytes: Int,
+        pattern: String
+    ) throws {
+        guard
+            !value.isEmpty,
+            value.utf8.count <= maxBytes,
+            value.range(of: pattern, options: .regularExpression) != nil
+        else {
             throw NIBridgeSecurityError("invalid_request", "malformed \(kind)")
         }
+    }
+
+    private func strictInteger(_ value: Any?) -> Int? {
+        guard
+            let number = value as? NSNumber,
+            CFGetTypeID(number) != CFBooleanGetTypeID()
+        else {
+            return nil
+        }
+        let doubleValue = number.doubleValue
+        guard
+            doubleValue.isFinite,
+            doubleValue.rounded(.towardZero) == doubleValue,
+            doubleValue >= Double(Int.min),
+            doubleValue <= Double(Int.max)
+        else {
+            return nil
+        }
+        return Int(doubleValue)
+    }
+
+    private func isJSONValue(
+        _ value: Any,
+        depth: Int = 0
+    ) -> Bool {
+        guard depth <= 32 else { return false }
+        if value is NSNull || value is String { return true }
+        if let number = value as? NSNumber {
+            if CFGetTypeID(number) == CFBooleanGetTypeID() { return true }
+            return number.doubleValue.isFinite
+        }
+        if let array = value as? [Any] {
+            return array.allSatisfy {
+                isJSONValue($0, depth: depth + 1)
+            }
+        }
+        if let object = value as? [String: Any] {
+            return object.values.allSatisfy {
+                isJSONValue($0, depth: depth + 1)
+            }
+        }
+        if let dictionary = value as? NSDictionary {
+            return dictionary.allSatisfy { key, child in
+                key is String && isJSONValue(child, depth: depth + 1)
+            }
+        }
+        return false
     }
 }

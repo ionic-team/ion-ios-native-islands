@@ -1,48 +1,24 @@
-name: PR Checks
+name: PR Title
 
 on:
   pull_request:
     types: [opened, synchronize, reopened, edited]
 
+permissions:
+  contents: read
+
 jobs:
-  pr-title-check:
-    name: Validate PR Title  
+  title:
     runs-on: ubuntu-latest
     steps:
-      - name: Check PR Title
+      - name: Validate conventional title
         uses: actions/github-script@v7
         with:
           script: |
             const title = context.payload.pull_request.title;
-            
-            // Valid conventional commit types
-            const validTypes = [
-              'feat', 'fix', 'docs', 'style', 'refactor', 
-              'test', 'chore', 'perf', 'ci', 'build', 'revert'
-            ];
-            
-            // Build regex dynamically from validTypes array
-            const typePattern = validTypes.join('|');
-            const conventionalRegex = new RegExp(`^(${typePattern})(\\(.+\\))?:\\s.+`);
-            
-            if (conventionalRegex.test(title)) {
-              console.log(`✅ PR title is valid: "${title}"`);
-            } else {
-              const errorMsg = [
-                `❌ PR title must follow conventional commits format:`,
-                ``,
-                `Expected: <type>[optional scope]: <description>`,
-                ``,
-                `Valid types: ${validTypes.join(', ')}`,
-                ``,
-                `Examples:`,
-                `- feat: add photo capture functionality`,
-                `- fix(container): keep the scroll ride pinned`, 
-                `- docs: update README installation steps`,
-                ``,
-                `Your title: "${title}"`
-              ].join('\n');
-              
-              console.log(errorMsg);
-              core.setFailed('PR title does not follow conventional commits format');
+            const pattern = /^(feat|fix|docs|style|refactor|test|chore|perf|ci|build|revert)(\([^)]+\))?!?: .+/;
+            if (!pattern.test(title)) {
+              core.setFailed(
+                'Use a conventional title such as "fix(container): preserve scroll position".'
+              );
             }

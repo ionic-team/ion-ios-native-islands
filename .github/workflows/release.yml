@@ -1,50 +1,44 @@
 name: Release
 
 on:
-  workflow_dispatch: {}
-
-env:
-  XCODE_VERSION: '26.2'
-  IOS_VERSION: '26.2'
-  NODE_VERSION: '24'
+  workflow_dispatch:
 
 permissions:
   contents: write
-  issues: write
-  pull-requests: write
+
+env:
+  NODE_VERSION: '24'
 
 jobs:
-  test:
-    name: Test Before Release
+  verify:
     runs-on: macos-15
     steps:
       - name: Checkout
         uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
 
-      - name: Setup Xcode
-        run: sudo xcode-select -s /Applications/Xcode_${{ env.XCODE_VERSION }}.app/Contents/Developer
+      - name: Install validation tools
+        run: brew install swiftlint cocoapods
 
-      - name: Install xcbeautify
-        run: brew install xcbeautify
+      - name: Run Swift tests
+        run: swift test
 
-      - name: Build & Test iOS
-        run: |
-          set -o pipefail
-          xcodebuild -scheme IONNativeIslandsLib \
-            -destination 'platform=iOS Simulator,name=iPhone 17,OS=${{ env.IOS_VERSION }}' \
-            build test | xcbeautify
+      - name: Build for iOS Simulator
+        run: >-
+          xcodebuild
+          -scheme IONNativeIslandsLib
+          -destination 'generic/platform=iOS Simulator'
+          build
+          CODE_SIGNING_ALLOWED=NO
 
-      - name: Validate Podspec
-        run: |
-          gem install cocoapods --no-document
-          pod lib lint IONNativeIslandsLib.podspec --allow-warnings
+      - name: Lint Swift
+        run: swiftlint --strict
+
+      - name: Validate podspec
+        run: pod lib lint IONNativeIslandsLib.podspec
 
   release:
-    name: Release
     runs-on: macos-15
-    needs: test
+    needs: verify
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -52,7 +46,7 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.CAP_GH_RELEASE_TOKEN }}
 
-      - name: Setup Node.js
+      - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -60,16 +54,11 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Setup Xcode
-        run: sudo xcode-select -s /Applications/Xcode_${{ env.XCODE_VERSION }}.app/Contents/Developer
-
       - name: Install CocoaPods
-        run: gem install cocoapods --no-document
+        run: brew install cocoapods
 
-      - name: Run semantic-release
+      - name: Release
         env:
           GITHUB_TOKEN: ${{ secrets.CAP_GH_RELEASE_TOKEN }}
           COCOAPODS_TRUNK_TOKEN: ${{ secrets.COCOAPODS_TRUNK_TOKEN }}
-        run: npx semantic-release
-
-
+        run: npm exec semantic-release
