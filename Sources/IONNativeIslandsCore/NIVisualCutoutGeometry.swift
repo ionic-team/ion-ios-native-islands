@@ -1,6 +1,6 @@
 import CoreGraphics
 
-internal enum NIVisualCutoutGeometry {
+enum NIVisualCutoutGeometry {
     static func union(_ rects: [CGRect]) -> [CGRect] {
         let rects = rects
             .map(\.standardized)

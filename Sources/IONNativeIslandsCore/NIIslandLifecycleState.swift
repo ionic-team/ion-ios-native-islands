@@ -1,25 +1,33 @@
-internal struct NIPendingCommand<Payload> {
+struct NIPendingCommand<Payload> {
     let method: String
     let payload: Payload
 }
 
-internal enum NITypeRegistrationResult: Equatable {
+enum NITypeRegistrationResult: Equatable {
     case registered
     case matched
     case typeMismatch
     case capacityExceeded
 }
 
-internal enum NIPendingCommandResult: Equatable {
+enum NIPendingCommandResult: Equatable {
     case buffered
     case pendingIDLimitExceeded
     case pendingCommandLimitExceeded
 }
 
-internal final class NIIslandLifecycleState<Payload> {
-    static var maxTrackedTypes: Int { 256 }
-    static var maxPendingIDs: Int { 64 }
-    static var maxPendingCommandsPerID: Int { 32 }
+final class NIIslandLifecycleState<Payload> {
+    static var maxTrackedTypes: Int {
+        256
+    }
+
+    static var maxPendingIDs: Int {
+        64
+    }
+
+    static var maxPendingCommandsPerID: Int {
+        32
+    }
 
     private var types: [String: String] = [:]
     private var pending: [String: [NIPendingCommand<Payload>]] = [:]
@@ -56,7 +64,8 @@ internal final class NIIslandLifecycleState<Payload> {
         id: String,
         method: String,
         payload: Payload
-    ) -> NIPendingCommandResult {
+    )
+        -> NIPendingCommandResult {
         if pending[id] == nil, pending.count >= Self.maxPendingIDs {
             return .pendingIDLimitExceeded
         }

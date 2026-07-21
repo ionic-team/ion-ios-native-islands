@@ -1,7 +1,7 @@
 import CoreFoundation
 import Foundation
 
-internal struct NIBridgeSecurityError: Error {
+struct NIBridgeSecurityError: Error {
     let code: String
     let message: String
 
@@ -11,7 +11,7 @@ internal struct NIBridgeSecurityError: Error {
     }
 }
 
-internal final class NIBridgeSecurity {
+final class NIBridgeSecurity {
     static let protocolVersion = NIBridgeContract.protocolVersion
     static let maxRequestBytes = NIBridgeContract.maxRequestBytes
     static let maxLayoutBytes = NIBridgeContract.maxLayoutBytes
@@ -150,11 +150,16 @@ internal final class NIBridgeSecurity {
     private func isJSONValue(
         _ value: Any,
         depth: Int = 0
-    ) -> Bool {
+    )
+        -> Bool {
         guard depth <= 32 else { return false }
-        if value is NSNull || value is String { return true }
+        if value is NSNull || value is String {
+            return true
+        }
         if let number = value as? NSNumber {
-            if CFGetTypeID(number) == CFBooleanGetTypeID() { return true }
+            if CFGetTypeID(number) == CFBooleanGetTypeID() {
+                return true
+            }
             return number.doubleValue.isFinite
         }
         if let array = value as? [Any] {

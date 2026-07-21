@@ -1,12 +1,12 @@
 import Foundation
 
-internal struct NIHitCandidate: Equatable {
+struct NIHitCandidate: Equatable {
     let id: String
     let interactive: Bool
     let excluded: Bool
 }
 
-internal struct NIHitDecision: Equatable {
+struct NIHitDecision: Equatable {
     let owner: String
     let island: String?
     let reason: String
@@ -18,7 +18,7 @@ internal struct NIHitDecision: Equatable {
     }
 }
 
-internal enum NIHitRouting {
+enum NIHitRouting {
     static func decide(_ topmostFirst: [NIHitCandidate]) -> NIHitDecision {
         guard let top = topmostFirst.first else {
             return NIHitDecision(owner: "web", reason: "outside")

@@ -1,7 +1,7 @@
 import Foundation
 
 /// Platform-reported edge bands that must stay owned by system/web gesture handling.
-internal struct NISystemGestureInsets: Equatable {
+struct NISystemGestureInsets: Equatable {
     var left: Double
     var top: Double
     var right: Double

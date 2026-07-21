@@ -1,6 +1,6 @@
 import Foundation
 
-internal struct NIScrollContainerGeometry: Equatable {
+struct NIScrollContainerGeometry: Equatable {
     let x: Double
     let y: Double
     let width: Double
@@ -11,7 +11,7 @@ internal struct NIScrollContainerGeometry: Equatable {
     let offsetY: Double
 }
 
-internal struct NIScrollContainerCandidate: Equatable {
+struct NIScrollContainerCandidate: Equatable {
     let key: Int
     let geometry: NIScrollContainerGeometry
     let ancestorKeys: [Int]
@@ -27,7 +27,7 @@ internal struct NIScrollContainerCandidate: Equatable {
     }
 }
 
-internal struct NIScrollContainerDescriptor: Equatable {
+struct NIScrollContainerDescriptor: Equatable {
     let geometry: NIScrollContainerGeometry
     let scrollPath: [String]
 
@@ -40,23 +40,24 @@ internal struct NIScrollContainerDescriptor: Equatable {
     }
 }
 
-internal enum NIScrollContainerMatchFailure: Equatable {
+enum NIScrollContainerMatchFailure: Equatable {
     case missing
     case ambiguous
     case sharedCandidate
 }
 
-internal struct NIScrollContainerMatchResult: Equatable {
+struct NIScrollContainerMatchResult: Equatable {
     let matches: [String: Int]
     let failures: [String: NIScrollContainerMatchFailure]
 }
 
-internal enum NIScrollContainerMatching {
+enum NIScrollContainerMatching {
     static func match(
         descriptors: [String: NIScrollContainerDescriptor],
         candidates: [NIScrollContainerCandidate],
         tolerance: Double
-    ) -> NIScrollContainerMatchResult {
+    )
+        -> NIScrollContainerMatchResult {
         var matches: [String: Int] = [:]
         var failures: [String: NIScrollContainerMatchFailure] = [:]
         let depths = Set(descriptors.values.map(\.scrollPath.count)).sorted()
@@ -90,8 +91,8 @@ internal enum NIScrollContainerMatching {
                 let eligible = topologyMatches.count == 1
                     ? topologyMatches
                     : geometricMatches.count == 1
-                        ? geometricMatches
-                        : topologyMatches
+                    ? geometricMatches
+                    : topologyMatches
                 guard eligible.count == 1 else {
                     failures[id] = eligible.isEmpty ? .missing : .ambiguous
                     continue
@@ -121,7 +122,8 @@ internal enum NIScrollContainerMatching {
         _ lhs: NIScrollContainerGeometry,
         _ rhs: NIScrollContainerGeometry,
         tolerance: Double
-    ) -> Bool {
+    )
+        -> Bool {
         close(lhs.x, rhs.x, tolerance: tolerance) &&
             close(lhs.y, rhs.y, tolerance: tolerance) &&
             close(lhs.width, rhs.width, tolerance: tolerance) &&
@@ -144,7 +146,8 @@ internal enum NIScrollContainerMatching {
         _ lhs: Double,
         _ rhs: Double,
         tolerance: Double
-    ) -> Bool {
+    )
+        -> Bool {
         abs(lhs - rhs) <= tolerance
     }
 }

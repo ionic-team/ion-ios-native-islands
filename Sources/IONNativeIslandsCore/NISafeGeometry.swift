@@ -1,7 +1,7 @@
 import CoreFoundation
 import Foundation
 
-internal struct NISafeRectValues: Equatable {
+struct NISafeRectValues: Equatable {
     let x: Double
     let y: Double
     let width: Double
@@ -9,9 +9,9 @@ internal struct NISafeRectValues: Equatable {
     let cornerRadius: Double
 }
 
-internal enum NISafeGeometry {
-    // CSS coordinates remain exact when converted through the Float-backed native
-    // rendering path up to 2^24. Extents use a smaller explicit allocation bound.
+enum NISafeGeometry {
+    /// CSS coordinates remain exact when converted through the Float-backed native
+    /// rendering path up to 2^24. Extents use a smaller explicit allocation bound.
     static let maxCoordinateMagnitude =
         NIBridgeContract.maxCoordinateMagnitudeCSSPixels
     static let maxExtent = NIBridgeContract.maxSizeCSSPixels

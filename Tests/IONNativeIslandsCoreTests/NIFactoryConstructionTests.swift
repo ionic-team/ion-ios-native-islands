@@ -13,7 +13,7 @@ final class NIFactoryConstructionTests: XCTestCase {
         }
 
         XCTAssertEqual(calls, 1)
-        guard case let .created(value) = result else {
+        guard case .created(let value) = result else {
             return XCTFail("expected created result")
         }
         XCTAssertTrue(value === expected)
@@ -26,7 +26,7 @@ final class NIFactoryConstructionTests: XCTestCase {
 
     func testConvertsThrownFactoryIntoStableFailureType() {
         let result = NIFactoryConstruction<NSObject>.run { throw FixtureError.construction }
-        guard case let .failed(errorType) = result else {
+        guard case .failed(let errorType) = result else {
             return XCTFail("expected failed result")
         }
         XCTAssertEqual(errorType, "FixtureError")

@@ -16,12 +16,17 @@ enum NILayoutValidation {
         order: [String],
         exclusions: [String: Any],
         cutouts: [String: Any]
-    ) -> String? {
-        if components.count > 256 { return "too many components" }
+    )
+        -> String? {
+        if components.count > 256 {
+            return "too many components"
+        }
         if scrollContainers.count > 256 {
             return "too many scroll containers"
         }
-        if order.count > 256 { return "too many paint-order entries" }
+        if order.count > 256 {
+            return "too many paint-order entries"
+        }
         var scrollContainerIDs: Set<String> = []
         var scrollContainerPaths: [String: [String]] = [:]
         if let error = scrollContainerError(
@@ -76,7 +81,8 @@ enum NILayoutValidation {
     private static func componentIDs(
         _ components: [[String: Any]],
         scrollContainerPaths: [String: [String]]
-    ) -> ComponentIDs {
+    )
+        -> ComponentIDs {
         var ids: Set<String> = []
         var activeIDs: Set<String> = []
         func failure(_ error: String) -> ComponentIDs {
@@ -118,9 +124,9 @@ enum NILayoutValidation {
             }
             guard
                 let rawCoordinateSpace =
-                    component["coordinateSpace"] as? String,
+                component["coordinateSpace"] as? String,
                 let coordinateSpace =
-                    NICoordinateSpace(rawValue: rawCoordinateSpace)
+                NICoordinateSpace(rawValue: rawCoordinateSpace)
             else {
                 return failure(
                     "component '\(id)' has an invalid coordinate space"
@@ -149,7 +155,9 @@ enum NILayoutValidation {
                     "component '\(id)' viewport coordinates require an empty scroll path"
                 )
             }
-            if active { activeIDs.insert(id) }
+            if active {
+                activeIDs.insert(id)
+            }
         }
         return ComponentIDs(all: ids, active: activeIDs, error: nil)
     }
@@ -158,7 +166,8 @@ enum NILayoutValidation {
         _ component: [String: Any],
         id: String,
         active: Bool
-    ) -> String? {
+    )
+        -> String? {
         guard let value = component["rect"] else {
             return "component '\(id)' must include rect"
         }
@@ -180,7 +189,8 @@ enum NILayoutValidation {
         _ scrollContainers: [[String: Any]],
         ids: inout Set<String>,
         paths: inout [String: [String]]
-    ) -> String? {
+    )
+        -> String? {
         for (index, scrollContainer) in scrollContainers.enumerated() {
             guard
                 let id = scrollContainer["id"] as? String,
@@ -231,7 +241,7 @@ enum NILayoutValidation {
         }
         for (id, path) in paths
             where !validScrollPath(path, containerPaths: paths) ||
-                path.contains(id) {
+            path.contains(id) {
             return "scroll container '\(id)' has an invalid scroll path"
         }
         return nil
@@ -240,7 +250,8 @@ enum NILayoutValidation {
     private static func validScrollPath(
         _ path: [String],
         containerPaths: [String: [String]]
-    ) -> Bool {
+    )
+        -> Bool {
         guard
             path.count <= maxScrollPathDepth,
             Set(path).count == path.count
@@ -273,7 +284,8 @@ enum NILayoutValidation {
         values: [String: Any],
         ids: Set<String>,
         scrollContainerPaths: [String: [String]]
-    ) -> String? {
+    )
+        -> String? {
         guard values.count <= 256 else {
             return "too many \(name) owners"
         }
@@ -297,9 +309,9 @@ enum NILayoutValidation {
                         containerPaths: scrollContainerPaths
                     ),
                     let rawCoordinateSpace =
-                        region["coordinateSpace"] as? String,
+                    region["coordinateSpace"] as? String,
                     let coordinateSpace =
-                        NICoordinateSpace(rawValue: rawCoordinateSpace)
+                    NICoordinateSpace(rawValue: rawCoordinateSpace)
                 else {
                     return "\(name) \(index) for '\(id)' is invalid"
                 }

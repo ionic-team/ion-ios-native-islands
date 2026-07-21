@@ -1,11 +1,12 @@
 import CoreGraphics
 
-internal enum NIContainerGeometry {
+enum NIContainerGeometry {
     static func calibratedScrollOffset(
         nativeOffset: CGPoint,
         zoom: CGFloat,
         bias: CGPoint
-    ) -> CGPoint {
+    )
+        -> CGPoint {
         guard zoom > 0 else { return .zero }
         return CGPoint(
             x: nativeOffset.x / zoom - bias.x,
@@ -17,7 +18,8 @@ internal enum NIContainerGeometry {
         width: CGFloat,
         height: CGFloat,
         cornerRadius: CGFloat
-    ) -> CGFloat {
+    )
+        -> CGFloat {
         min(max(cornerRadius, 0), min(width, height) / 2)
     }
 
@@ -28,7 +30,8 @@ internal enum NIContainerGeometry {
         height: CGFloat,
         zoom: CGFloat,
         offset: CGPoint
-    ) -> CGRect {
+    )
+        -> CGRect {
         CGRect(
             x: x * zoom - offset.x,
             y: y * zoom - offset.y,
@@ -46,7 +49,8 @@ internal enum NIContainerGeometry {
         nestedOffset: CGPoint,
         zoom: CGFloat,
         rootOffset: CGPoint
-    ) -> CGRect {
+    )
+        -> CGRect {
         let scrollsWithDocument = coordinateSpace == .document
         return screenRect(
             x: x - (scrollsWithDocument ? nestedOffset.x : 0),
@@ -62,7 +66,8 @@ internal enum NIContainerGeometry {
         point: CGPoint,
         in rect: CGRect,
         cornerRadius: CGFloat
-    ) -> Bool {
+    )
+        -> Bool {
         guard rect.contains(point) else { return false }
         let radius = clampedCornerRadius(
             width: rect.width,

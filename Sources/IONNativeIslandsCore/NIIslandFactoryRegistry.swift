@@ -5,12 +5,12 @@ public enum NativeIslandAccessibility: Sendable {
     case native
 }
 
-internal struct NIIslandFactoryRegistration<Factory> {
+struct NIIslandFactoryRegistration<Factory> {
     let accessibility: NativeIslandAccessibility
     let factory: Factory
 }
 
-internal final class NIIslandFactoryRegistry<Factory> {
+final class NIIslandFactoryRegistry<Factory> {
     private var entries: [String: NIIslandFactoryRegistration<Factory>] = [:]
     private let lock = NSLock()
 
