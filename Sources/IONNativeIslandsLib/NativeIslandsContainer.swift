@@ -3,7 +3,7 @@
     import WebKit
 
     final class NativeIslandsContainer: UIView {
-        private weak var webView: WKWebView?
+        weak var webView: WKWebView?
         private weak var originalWebViewParent: UIView?
         private var originalWebViewIndex = 0
         private var originalWebViewFrame = CGRect.zero
@@ -11,22 +11,22 @@
         private var originalWebViewOpaque = true
         private var originalWebViewBackground: UIColor?
         private var originalScrollBackground: UIColor?
-        private let documentLayer = UIView()
-        private let overlayLayer = UIView()
-        private var hosts: [String: UIView] = [:]
-        private var contentHosts: [String: UIView] = [:]
-        private let hostClipping = NativeIslandsHostClipping()
-        private var components: [String: IslandComponent] = [:]
-        private var layoutRects: [String: IslandRect] = [:]
-        private let innerScroll = NativeIslandsScrollCoordinator()
+        let documentLayer = UIView()
+        let overlayLayer = UIView()
+        var hosts: [String: UIView] = [:]
+        var contentHosts: [String: UIView] = [:]
+        let hostClipping = NativeIslandsHostClipping()
+        var components: [String: IslandComponent] = [:]
+        var layoutRects: [String: IslandRect] = [:]
+        let innerScroll = NativeIslandsScrollCoordinator()
         private var exclusions: [String: [IslandRegion]] = [:]
-        private var cutouts: [String: [IslandRegion]] = [:]
+        var cutouts: [String: [IslandRegion]] = [:]
         private var interactiveIDs: Set<String> = []
-        private var order: [String] = []
+        var order: [String] = []
         private var scrollObservation: NSKeyValueObservation?
         private var zoomObservation: NSKeyValueObservation?
         private var systemGestureInsets = NISystemGestureInsets()
-        private let visibility = NativeIslandsVisibilityTracker()
+        let visibility = NativeIslandsVisibilityTracker()
 
         var onIslandVisibility: ((String, Bool) -> Void)? {
             get { visibility.onChange }
@@ -318,171 +318,6 @@
                 exclusions: exclusions,
                 cutouts: cutouts,
                 webView: webView
-            )
-        }
-
-        private func updateAllInnerScrollGeometry() {
-            for id in innerScroll.componentIDs {
-                updateHostGeometry(id: id, updateStaticGeometry: false)
-            }
-            notifyVisibility()
-        }
-
-        private func updateInnerScrollGeometry(containerID: String) {
-            for id in innerScroll.componentIDs(affectedBy: containerID) {
-                updateHostGeometry(id: id, updateStaticGeometry: false)
-            }
-            notifyVisibility()
-        }
-
-        private func updateHostGeometry(
-            id: String,
-            updateStaticGeometry: Bool = true
-        ) {
-            guard
-                let host = hosts[id],
-                let contentHost = contentHosts[id],
-                let component = components[id],
-                let layoutRect = layoutRects[id]
-            else {
-                return
-            }
-            let screen = screenIslandRect(
-                layoutRect,
-                coordinateSpace: component.coordinateSpace,
-                scrollPath: component.scrollPath
-            )
-            let parent = component.plane == .overlay
-                ? overlayLayer
-                : documentLayer
-            host.frame = parent.convert(screen.cgRect, from: self)
-            contentHost.frame = host.bounds
-            let localScale = screen.width > 0
-                ? host.bounds.width / screen.width
-                : 1
-            let cornerRadius = NIContainerGeometry.clampedCornerRadius(
-                width: host.bounds.width,
-                height: host.bounds.height,
-                cornerRadius: screen.cornerRadius * abs(localScale)
-            )
-            host.layer.cornerRadius = cornerRadius
-            host.layer.masksToBounds = cornerRadius > 0
-
-            let localScrollports = screenScrollports(id: id).map {
-                NativeIslandsCoordinateMapping.localRect(
-                    $0,
-                    container: self,
-                    view: host
-                )
-            }
-            hostClipping.applyScrollports(
-                to: host,
-                contentHost: contentHost,
-                islandID: id,
-                scrollports: localScrollports
-            )
-            let localCutouts = (cutouts[id] ?? []).map {
-                NativeIslandsCoordinateMapping.localRect(
-                    screenIslandRect($0),
-                    container: self,
-                    view: contentHost
-                )
-            }
-            hostClipping.applyCutouts(
-                to: contentHost,
-                cutouts: localCutouts
-            )
-            if updateStaticGeometry {
-                host.setNeedsLayout()
-            }
-        }
-
-        private func applyOrder() {
-            var documentIndex = 0
-            var overlayIndex = 0
-            for id in order {
-                guard
-                    let host = hosts[id],
-                    let component = components[id]
-                else {
-                    continue
-                }
-                if component.plane == .overlay {
-                    overlayLayer.insertSubview(
-                        host,
-                        at: min(overlayIndex, overlayLayer.subviews.count)
-                    )
-                    overlayIndex += 1
-                } else {
-                    documentLayer.insertSubview(
-                        host,
-                        at: min(documentIndex, documentLayer.subviews.count)
-                    )
-                    documentIndex += 1
-                }
-            }
-        }
-
-        private func notifyVisibility() {
-            visibility.update(
-                container: self,
-                hosts: hosts,
-                screenScrollports: { [weak self] id in
-                    self?.screenScrollports(id: id).map(\.cgRect) ?? []
-                }
-            )
-        }
-
-        private func screenIslandRect(_ region: IslandRegion) -> IslandRect {
-            screenIslandRect(
-                region.rect,
-                coordinateSpace: region.coordinateSpace,
-                scrollPath: region.scrollPath
-            )
-        }
-
-        private func screenIslandRect(
-            _ rect: IslandRect,
-            coordinateSpace: NICoordinateSpace,
-            scrollPath: [String]
-        )
-            -> IslandRect {
-            NativeIslandsCoordinateMapping.screenRect(
-                rect,
-                coordinateSpace: coordinateSpace,
-                nestedOffset: innerScroll.offset(path: scrollPath),
-                zoom: webView?.scrollView.zoomScale ?? 1,
-                rootOffset: webView?.scrollView.contentOffset ?? .zero
-            )
-        }
-
-        private func screenScrollports(id: String) -> [IslandRect] {
-            innerScroll.scrollports(componentID: id).map {
-                screenIslandRect(
-                    $0,
-                    coordinateSpace: .document,
-                    scrollPath: []
-                )
-            }
-        }
-
-        private func updateRootTrackedGeometry() {
-            for (id, component) in components
-                where component.plane == .overlay ||
-                component.coordinateSpace == .viewport ||
-                (cutouts[id] ?? []).contains(where: {
-                    $0.coordinateSpace == .viewport
-                }) {
-                updateHostGeometry(id: id, updateStaticGeometry: false)
-            }
-            notifyVisibility()
-        }
-
-        private func updateDocumentTransform() {
-            guard let scrollView = webView?.scrollView else { return }
-            documentLayer.transform = CGAffineTransform(
-                scaleX: scrollView.zoomScale,
-                y: scrollView.zoomScale
             )
         }
     }
