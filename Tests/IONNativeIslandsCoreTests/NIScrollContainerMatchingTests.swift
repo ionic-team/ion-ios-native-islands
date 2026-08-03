@@ -251,4 +251,53 @@ final class NIScrollContainerMatchingTests: XCTestCase {
         XCTAssertEqual(result.matches, ["outer": 2, "inner": 4])
         XCTAssertTrue(result.failures.isEmpty)
     }
+
+    func testEqualScrollportsNeverBindByCandidateOrder() {
+        let descriptor = NIScrollContainerDescriptor(geometry: main)
+        let first = NIScrollContainerCandidate(key: 3, geometry: main)
+        let second = NIScrollContainerCandidate(key: 7, geometry: main)
+
+        for candidates in [[first, second], [second, first]] {
+            let result = NIScrollContainerMatching.match(
+                descriptors: ["main": descriptor],
+                candidates: candidates,
+                tolerance: 1
+            )
+            XCTAssertTrue(result.matches.isEmpty)
+            XCTAssertEqual(result.failures["main"], .ambiguous)
+        }
+
+        let moving = NIScrollContainerGeometry(
+            x: main.x,
+            y: main.y,
+            width: main.width,
+            height: main.height,
+            contentWidth: main.contentWidth,
+            contentHeight: main.contentHeight,
+            offsetX: main.offsetX,
+            offsetY: 248
+        )
+        let movingDescriptor = NIScrollContainerDescriptor(geometry: moving)
+        let movingCandidate = NIScrollContainerCandidate(
+            key: first.key,
+            geometry: moving
+        )
+
+        XCTAssertEqual(
+            NIScrollContainerMatching.match(
+                descriptors: ["main": movingDescriptor],
+                candidates: [second, movingCandidate],
+                tolerance: 1
+            ).matches,
+            ["main": first.key]
+        )
+
+        let restored = NIScrollContainerMatching.match(
+            descriptors: ["main": descriptor],
+            candidates: [first, second],
+            tolerance: 1
+        )
+        XCTAssertTrue(restored.matches.isEmpty)
+        XCTAssertEqual(restored.failures["main"], .ambiguous)
+    }
 }
