@@ -85,6 +85,18 @@ are stamped with the island id.
 implementations. Components that own active resources should use those callbacks
 to stop work while backgrounded, offscreen, or disposed.
 
+## Whole-scene effects
+
+Shell integrations can find the rigid native scene that contains the WebView and
+every island plane:
+
+```swift
+let scene = NativeIslandsScenes.find(webView: webView)
+```
+
+Move or wrap `scene` for effects such as pull-to-refresh or a whole-page transition.
+Do not move the WebView or individual island hosts separately.
+
 ## Errors
 
 Command failures use stable codes: `invalid_request`, `unknown_command`,

@@ -240,6 +240,7 @@
                 }
             }
             contentHost.frame = host.bounds
+            contentHost.subviews.forEach { $0.frame = contentHost.bounds }
             guard !scrollports.isEmpty else {
                 scrollportHosts[islandID] = []
                 scrollportMasks[islandID] = []

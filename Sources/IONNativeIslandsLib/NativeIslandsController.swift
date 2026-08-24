@@ -45,6 +45,7 @@
                 at: min(index, parent.subviews.count)
             )
             containerInstalled = true
+            NativeIslandsScenes.register(webView: webView, scene: container)
             container.onIslandVisibility = { [weak self] id, visible in
                 self?.islands[id]?.setViewportVisible(visible)
             }
@@ -270,6 +271,9 @@
             islands.removeAll()
             initializedIslands.removeAll()
             lifecycle.clear()
+            if let webView {
+                NativeIslandsScenes.unregister(webView: webView)
+            }
             container.detachWebView()
             container.removeFromSuperview()
             containerInstalled = false
