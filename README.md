@@ -42,7 +42,7 @@ NativeIslandsRegistry.register(
 }
 ```
 
-`.web` keeps the web fallback as the accessibility owner. Use `.native` only when
+`.web` keeps hidden web semantics as the accessibility owner. Use `.native` only when
 the native view intentionally owns and exposes the accessible interface. The
 matching `defineNativeIsland` call must use the same ownership (`web` is the
 default; set `accessibility: "native"` for `.native`) so only one semantic face

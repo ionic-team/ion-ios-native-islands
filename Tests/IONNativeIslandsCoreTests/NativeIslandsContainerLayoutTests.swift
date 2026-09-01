@@ -5,6 +5,20 @@
     @testable import IONNativeIslandsLib
 
     final class NativeIslandsContainerLayoutTests: XCTestCase {
+        func testResetCompletionRunsAfterTheMainQueueReset() {
+            let controller = NativeIslandsController { _, _ in }
+            let completed = expectation(description: "reset completed")
+
+            DispatchQueue.global().async {
+                controller.reset {
+                    XCTAssertTrue(Thread.isMainThread)
+                    completed.fulfill()
+                }
+            }
+
+            wait(for: [completed], timeout: 1)
+        }
+
         func testRegisteredViewMatchesUpdatedHostBounds() throws {
             let container = NativeIslandsContainer(
                 frame: CGRect(x: 0, y: 0, width: 402, height: 874)

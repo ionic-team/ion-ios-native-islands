@@ -1,7 +1,7 @@
 import Foundation
 
 /// Pure boundary around app-owned factory execution. Construction errors become data so the
-/// plugin can degrade only the affected island instead of escaping the ledger pass.
+/// plugin can reject only the affected island instead of escaping the ledger pass.
 enum NIFactoryConstruction<Value> {
     case created(Value)
     case missing

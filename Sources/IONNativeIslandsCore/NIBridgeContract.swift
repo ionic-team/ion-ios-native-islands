@@ -1,7 +1,7 @@
 import Foundation
 
 enum NIBridgeContract {
-    static let protocolVersion = 6
+    static let protocolVersion = 7
     static let maxRequestBytes = 16384
     static let maxLayoutBytes = 1_048_576
     static let maxIdentifierBytes = 64

@@ -12,6 +12,7 @@
         private weak var webView: WKWebView?
         private var containerInstalled = false
         private var hostResumed = false
+        private var layoutRevision = 0
 
         public init(
             events: @escaping (_ event: String, _ payload: [String: Any]) -> Void
@@ -130,6 +131,8 @@
             )
 
             DispatchQueue.main.async {
+                self.layoutRevision &+= 1
+                let layoutRevision = self.layoutRevision
                 self.ensureContainer(webView: self.webView)
                 guard self.canApplyLayout(components) else {
                     failure(
@@ -179,20 +182,38 @@
                     self.lifecycle.removeType(id: id)
                 }
                 self.lifecycle.retain(ids: liveIDs)
-                let innerScrollFailures = self.container.applyLedger(
-                    components: accepted,
-                    scrollContainers: scrollContainers,
-                    order: order,
-                    exclusions: exclusions,
-                    cutouts: cutouts
-                )
-                for (id, reason) in innerScrollFailures {
-                    self.reportError(id: id, reason: reason)
+                let applyLedger = {
+                    self.container.applyLedger(
+                        components: accepted,
+                        scrollContainers: scrollContainers,
+                        order: order,
+                        exclusions: exclusions,
+                        cutouts: cutouts
+                    )
                 }
-                self.container.setCompositingActive(
-                    accepted.contains { $0.active }
-                )
-                completion()
+                let finish = { (innerScrollFailures: [String: String]) in
+                    for (id, reason) in innerScrollFailures {
+                        self.reportError(id: id, reason: reason)
+                    }
+                    self.container.setCompositingActive(
+                        accepted.contains { $0.active }
+                    )
+                    completion()
+                }
+                let innerScrollFailures = applyLedger()
+                guard innerScrollFailures.values.contains(where: {
+                    $0.hasSuffix(":missing")
+                }) else {
+                    finish(innerScrollFailures)
+                    return
+                }
+                DispatchQueue.main.async {
+                    guard self.layoutRevision == layoutRevision else {
+                        completion()
+                        return
+                    }
+                    finish(applyLedger())
+                }
             }
         }
 
@@ -206,14 +227,21 @@
                     webView?.superview === container)
         }
 
-        public func reset() {
-            DispatchQueue.main.async {
+        public func reset(completion: @escaping () -> Void = {}) {
+            let performReset = {
+                self.layoutRevision &+= 1
                 self.container.removeAllIslands()
                 self.islands.values.forEach { $0.onDestroy() }
                 self.islands.removeAll()
                 self.initializedIslands.removeAll()
                 self.lifecycle.reset()
                 self.container.setCompositingActive(false)
+                completion()
+            }
+            if Thread.isMainThread {
+                performReset()
+            } else {
+                DispatchQueue.main.async(execute: performReset)
             }
         }
 
@@ -266,6 +294,7 @@
                 }
                 return
             }
+            layoutRevision &+= 1
             container.removeAllIslands()
             islands.values.forEach { $0.onDestroy() }
             islands.removeAll()

@@ -6,7 +6,7 @@ import XCTest
 /// here without the coordinated bump fails four builds instead of breaking apps.
 final class NIBridgeContractFreezeTests: XCTestCase {
     func testCoreContractValuesAreFrozen() {
-        XCTAssertEqual(NIBridgeContract.protocolVersion, 6)
+        XCTAssertEqual(NIBridgeContract.protocolVersion, 7)
         XCTAssertEqual(NIBridgeContract.maxRequestBytes, 16384)
         XCTAssertEqual(NIBridgeContract.maxLayoutBytes, 1_048_576)
         XCTAssertEqual(NIBridgeContract.maxIdentifierBytes, 64)
