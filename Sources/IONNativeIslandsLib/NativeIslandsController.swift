@@ -141,47 +141,7 @@
                     )
                     return
                 }
-                self.lifecycle.retain(ids: Set(components.map(\.0.id)))
-                var accepted: [IslandComponent] = []
-                for (component, type) in components {
-                    switch self.lifecycle.registerType(
-                        id: component.id,
-                        type: type
-                    ) {
-                    case .registered, .matched:
-                        break
-                    case .typeMismatch:
-                        self.reportError(
-                            id: component.id,
-                            reason: "invalid_request: component type does not match its registered layout type"
-                        )
-                        continue
-                    case .capacityExceeded:
-                        self.reportError(
-                            id: component.id,
-                            reason: "invalid_request: too many tracked component types"
-                        )
-                        continue
-                    }
-                    var acceptedComponent = component
-                    if component.active,
-                       !self.ensureIsland(id: component.id, type: type) {
-                        acceptedComponent.active = false
-                        acceptedComponent.rect = nil
-                    }
-                    accepted.append(acceptedComponent)
-                }
-
-                let liveIDs = Set(accepted.map(\.id))
-                let staleIDs = self.islands.keys.filter { !liveIDs.contains($0) }
-                for id in staleIDs {
-                    self.container.removeIsland(id: id)
-                    self.islands[id]?.onDestroy()
-                    self.islands[id] = nil
-                    self.initializedIslands.remove(id)
-                    self.lifecycle.removeType(id: id)
-                }
-                self.lifecycle.retain(ids: liveIDs)
+                let accepted = self.acceptComponents(components)
                 let applyLedger = {
                     self.container.applyLedger(
                         components: accepted,
@@ -215,6 +175,53 @@
                     finish(applyLedger())
                 }
             }
+        }
+
+        /// Registers each component's layout type, drops islands that failed to
+        /// materialize, and tears down the ones the new ledger no longer names.
+        private func acceptComponents(
+            _ components: [(IslandComponent, String)]
+        )
+            -> [IslandComponent] {
+            lifecycle.retain(ids: Set(components.map(\.0.id)))
+            var accepted: [IslandComponent] = []
+            for (component, type) in components {
+                switch lifecycle.registerType(id: component.id, type: type) {
+                case .registered, .matched:
+                    break
+                case .typeMismatch:
+                    reportError(
+                        id: component.id,
+                        reason: "invalid_request: component type does not match its registered layout type"
+                    )
+                    continue
+                case .capacityExceeded:
+                    reportError(
+                        id: component.id,
+                        reason: "invalid_request: too many tracked component types"
+                    )
+                    continue
+                }
+                var acceptedComponent = component
+                if component.active,
+                   !ensureIsland(id: component.id, type: type) {
+                    acceptedComponent.active = false
+                    acceptedComponent.rect = nil
+                }
+                accepted.append(acceptedComponent)
+            }
+
+            let liveIDs = Set(accepted.map(\.id))
+            let staleIDs = islands.keys.filter { !liveIDs.contains($0) }
+            for id in staleIDs {
+                container.removeIsland(id: id)
+                islands[id]?.onDestroy()
+                islands[id] = nil
+                initializedIslands.remove(id)
+                lifecycle.removeType(id: id)
+            }
+            lifecycle.retain(ids: liveIDs)
+            return accepted
         }
 
         private func canApplyLayout(
