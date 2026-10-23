@@ -12,10 +12,7 @@
             factory: @escaping () throws -> NativeIsland
         ) {
             precondition(
-                componentName.range(
-                    of: "^[A-Za-z_][A-Za-z0-9._:-]{0,63}$",
-                    options: .regularExpression
-                ) != nil,
+                NILayoutValidation.validIdentifier(componentName),
                 "componentName must be a valid native component identifier"
             )
             factories.register(

@@ -2,8 +2,6 @@ import CoreFoundation
 import Foundation
 
 enum NILayoutValidation {
-    private static let maxScrollPathDepth = 16
-
     private struct ComponentIDs {
         var all: Set<String>
         var active: Set<String>
@@ -15,17 +13,18 @@ enum NILayoutValidation {
         scrollContainers: [[String: Any]] = [],
         order: [String],
         exclusions: [String: Any],
-        cutouts: [String: Any]
+        cutouts: [String: Any],
+        tints: [String: Any] = [:],
+        motions: Any? = nil
     )
         -> String? {
-        if components.count > 256 {
-            return "too many components"
-        }
-        if scrollContainers.count > 256 {
-            return "too many scroll containers"
-        }
-        if order.count > 256 {
-            return "too many paint-order entries"
+        if let error = motionError(
+            motions,
+            components: components,
+            scrollContainers: scrollContainers,
+            regions: [exclusions, cutouts, tints]
+        ) {
+            return error
         }
         var scrollContainerIDs: Set<String> = []
         var scrollContainerPaths: [String: [String]] = [:]
@@ -67,15 +66,55 @@ enum NILayoutValidation {
             values: cutouts,
             ids: ids,
             scrollContainerPaths: scrollContainerPaths
+        ) ?? regionError(
+            name: "tint",
+            values: tints,
+            ids: ids,
+            scrollContainerPaths: scrollContainerPaths
         )
     }
 
-    private static func validIdentifier(_ value: String) -> Bool {
-        value.utf8.count <= NIBridgeSecurity.maxIdentifierBytes &&
-            value.range(
-                of: "^[A-Za-z_][A-Za-z0-9._:-]*$",
-                options: .regularExpression
-            ) != nil
+    private static func motionError(
+        _ motions: Any?,
+        components: [[String: Any]],
+        scrollContainers: [[String: Any]],
+        regions: [[String: Any]]
+    )
+        -> String? {
+        let (ids, error) = NIMotionPayload.validate(motions)
+        if let error { return error }
+        for (index, component) in components.enumerated() {
+            if let error = NIMotionPayload.pathError(component["motionPath"], ids: ids, label: "component \(index)") {
+                return error
+            }
+        }
+        for (index, container) in scrollContainers.enumerated() {
+            if let error = NIMotionPayload.pathError(
+                container["motionPath"],
+                ids: ids,
+                label: "scroll container \(index)"
+            ) {
+                return error
+            }
+        }
+        for owners in regions {
+            for (id, value) in owners {
+                for (index, region) in (value as? [[String: Any]] ?? []).enumerated() {
+                    if let error = NIMotionPayload.pathError(
+                        region["motionPath"],
+                        ids: ids,
+                        label: "region \(index) for '\(id)'"
+                    ) {
+                        return error
+                    }
+                }
+            }
+        }
+        return nil
+    }
+
+    static func validIdentifier(_ value: String) -> Bool {
+        !value.isEmpty
     }
 
     private static func componentIDs(
@@ -125,12 +164,19 @@ enum NILayoutValidation {
             guard
                 let rawCoordinateSpace =
                 component["coordinateSpace"] as? String,
-                let coordinateSpace =
-                NICoordinateSpace(rawValue: rawCoordinateSpace)
+                NICoordinateSpace(rawValue: rawCoordinateSpace) != nil
             else {
                 return failure(
                     "component '\(id)' has an invalid coordinate space"
                 )
+            }
+            if let opacity = component["opacity"] {
+                guard
+                    let value = NISafeGeometry.strictNumber(opacity),
+                    (0 ... 1).contains(value)
+                else {
+                    return failure("component '\(id)' has an invalid opacity")
+                }
             }
             if let error = componentRectError(
                 component,
@@ -148,11 +194,6 @@ enum NILayoutValidation {
             else {
                 return failure(
                     "component '\(id)' has an invalid scroll path"
-                )
-            }
-            if coordinateSpace == .viewport, !scrollPath.isEmpty {
-                return failure(
-                    "component '\(id)' viewport coordinates require an empty scroll path"
                 )
             }
             if active {
@@ -205,6 +246,10 @@ enum NILayoutValidation {
             else {
                 return "scroll container '\(id)' has an invalid scroll path"
             }
+            if let space = scrollContainer["coordinateSpace"],
+               (space as? String).flatMap(NICoordinateSpace.init(rawValue:)) == nil {
+                return "scroll container '\(id)' has an invalid coordinateSpace"
+            }
             paths[id] = scrollPath
             guard
                 let rect = scrollContainer["rect"] as? [String: Any],
@@ -220,21 +265,13 @@ enum NILayoutValidation {
                     scrollContainer["contentHeight"]
                 ),
                 contentWidth >= parsedRect.width,
-                contentWidth <= NISafeGeometry.maxCoordinateMagnitude,
-                contentHeight >= parsedRect.height,
-                contentHeight <= NISafeGeometry.maxCoordinateMagnitude
+                contentHeight >= parsedRect.height
             else {
                 return "scroll container '\(id)' has invalid content size"
             }
             guard
-                let offsetX = NISafeGeometry.strictNumber(
-                    scrollContainer["offsetX"]
-                ),
-                let offsetY = NISafeGeometry.strictNumber(
-                    scrollContainer["offsetY"]
-                ),
-                abs(offsetX) <= NISafeGeometry.maxCoordinateMagnitude,
-                abs(offsetY) <= NISafeGeometry.maxCoordinateMagnitude
+                NISafeGeometry.strictNumber(scrollContainer["offsetX"]) != nil,
+                NISafeGeometry.strictNumber(scrollContainer["offsetY"]) != nil
             else {
                 return "scroll container '\(id)' has invalid offset"
             }
@@ -252,10 +289,7 @@ enum NILayoutValidation {
         containerPaths: [String: [String]]
     )
         -> Bool {
-        guard
-            path.count <= maxScrollPathDepth,
-            Set(path).count == path.count
-        else {
+        guard Set(path).count == path.count else {
             return false
         }
         for (index, id) in path.enumerated() {
@@ -286,18 +320,12 @@ enum NILayoutValidation {
         scrollContainerPaths: [String: [String]]
     )
         -> String? {
-        guard values.count <= 256 else {
-            return "too many \(name) owners"
-        }
         for (id, value) in values {
             guard ids.contains(id) else {
                 return "\(name)s reference unknown component '\(id)'"
             }
             guard let regions = value as? [[String: Any]] else {
                 return "\(name)s for '\(id)' must be an array"
-            }
-            guard regions.count <= 256 else {
-                return "too many \(name)s for '\(id)'"
             }
             for (index, region) in regions.enumerated() {
                 guard
@@ -315,8 +343,16 @@ enum NILayoutValidation {
                 else {
                     return "\(name) \(index) for '\(id)' is invalid"
                 }
-                if coordinateSpace == .viewport, !scrollPath.isEmpty {
-                    return "\(name) \(index) for '\(id)' is invalid"
+                if name == "tint", NITintColor(region["color"]) == nil {
+                    return "\(name) \(index) for '\(id)' has an invalid color"
+                }
+                if region["sticky"] != nil {
+                    guard
+                        let sticky = NISticky(region["sticky"]),
+                        sticky.fits(scrollPath: scrollPath, coordinateSpace: coordinateSpace)
+                    else {
+                        return "\(name) \(index) for '\(id)' has an invalid sticky"
+                    }
                 }
             }
         }

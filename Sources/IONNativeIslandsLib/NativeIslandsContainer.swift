@@ -21,16 +21,33 @@
         let innerScroll = NativeIslandsScrollCoordinator()
         private var exclusions: [String: [IslandRegion]] = [:]
         var cutouts: [String: [IslandRegion]] = [:]
+        var tints: [String: [IslandRegion]] = [:]
         private var interactiveIDs: Set<String> = []
         var order: [String] = []
         private var scrollObservation: NSKeyValueObservation?
         private var zoomObservation: NSKeyValueObservation?
         private var systemGestureInsets = NISystemGestureInsets()
         let visibility = NativeIslandsVisibilityTracker()
+        var motions: [String: NIMotion] = [:]
+        var pageClock: NIPageClock?
+        var motionFrameTime: CFTimeInterval?
+        var motionLink: CADisplayLink?
+        var motionStartCorrections: [String: Double] = [:]
+        var unsyncedMotions: [String: CFTimeInterval] = [:]
+        var commitObserver: CFRunLoopObserver?
+        var motionTracks: [String: CAKeyframeAnimation] = [:]
+        var paneViews: [String: UIView] = [:]
+        var paneContainers: [String: IslandScrollContainer] = [:]
+        var paneUnder: [String: String] = [:]
 
         var onIslandVisibility: ((String, Bool) -> Void)? {
             get { visibility.onChange }
             set { visibility.onChange = newValue }
+        }
+
+        deinit {
+            motionLink?.invalidate()
+            if let observer = commitObserver { CFRunLoopObserverInvalidate(observer) }
         }
 
         override func safeAreaInsetsDidChange() {
@@ -140,6 +157,14 @@
             documentLayer.addSubview(host)
         }
 
+        func replaceIslandView(id: String, view: UIView) {
+            guard let contentHost = contentHosts[id] else { return }
+            contentHost.subviews.forEach { $0.removeFromSuperview() }
+            view.frame = contentHost.bounds
+            view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            contentHost.addSubview(view)
+        }
+
         func removeIsland(id: String) {
             hosts.removeValue(forKey: id)?.removeFromSuperview()
             contentHosts[id] = nil
@@ -149,6 +174,7 @@
             innerScroll.removeComponent(id: id)
             exclusions[id] = nil
             cutouts[id] = nil
+            tints[id] = nil
             interactiveIDs.remove(id)
             visibility.remove(id: id)
             order.removeAll { $0 == id }
@@ -164,9 +190,16 @@
             innerScroll.reset()
             exclusions.removeAll()
             cutouts.removeAll()
+            tints.removeAll()
             interactiveIDs.removeAll()
             visibility.reset()
             order.removeAll()
+            motions.removeAll()
+            motionStartCorrections.removeAll()
+            unsyncedMotions.removeAll()
+            motionTracks.removeAll()
+            removeAllPanes()
+            stopMotion()
         }
 
         func applyLedger(
@@ -174,20 +207,26 @@
             scrollContainers: [IslandScrollContainer],
             order: [String],
             exclusions: [String: [IslandRegion]],
-            cutouts: [String: [IslandRegion]]
+            cutouts: [String: [IslandRegion]],
+            tints: [String: [IslandRegion]] = [:],
+            motions: [String: NIMotion] = [:],
+            panes: [String: IslandPane] = [:]
         )
             -> [String: String] {
+            adopt(motions)
             self.order = order
             self.exclusions = exclusions
             self.cutouts = cutouts
+            self.tints = tints
             components = Dictionary(
                 uniqueKeysWithValues: newComponents.map { ($0.id, $0) }
             )
-            let innerScrollFailures = prepareInnerScrollBindings(
+            let innerScrollFailures = innerScroll.prepare(
                 components: newComponents,
                 scrollContainers: scrollContainers,
                 exclusions: exclusions,
-                cutouts: cutouts
+                cutouts: cutouts.merging(tints) { $0 + $1 },
+                webView: webView
             )
             interactiveIDs = Set(
                 newComponents
@@ -212,14 +251,13 @@
                     ? overlayLayer
                     : documentLayer
                 if host.superview !== parent {
-                    host.removeFromSuperview()
                     parent.addSubview(host)
                 }
                 guard
                     component.active,
                     let rect = component.rect,
-                    rect.width >= 1,
-                    rect.height >= 1,
+                    rect.width > 0,
+                    rect.height > 0,
                     innerScrollFailures[component.id] == nil
                 else {
                     host.isHidden = true
@@ -231,6 +269,7 @@
                 updateHostGeometry(id: component.id)
             }
 
+            applyPanes(panes, scrollContainers: scrollContainers)
             applyOrder()
             if documentLayer.superview !== webView?.scrollView {
                 documentLayer.removeFromSuperview()
@@ -241,15 +280,17 @@
             updateDocumentTransform()
             updateRootTrackedGeometry()
             notifyVisibility()
+            scheduleMotionFrames()
             return innerScrollFailures
         }
 
-        func setCompositingActive(_ active: Bool) {
+        func setCompositingActive(_ active: Bool, canvasColor: UIColor? = nil) {
             guard let webView else { return }
             if active {
+                let canvas = canvasColor ?? webView.underPageBackgroundColor
                 webView.isOpaque = false
                 webView.backgroundColor = .clear
-                webView.scrollView.backgroundColor = .clear
+                webView.scrollView.backgroundColor = canvas
             } else {
                 webView.isOpaque = originalWebViewOpaque
                 webView.backgroundColor = originalWebViewBackground
@@ -289,10 +330,11 @@
                     rect: screenIslandRect(
                         layoutRect,
                         coordinateSpace: component.coordinateSpace,
-                        scrollPath: component.scrollPath
+                        scrollPath: component.scrollPath,
+                        motionPath: component.motionPath
                     ),
                     scrollports: screenScrollports(id: id),
-                    exclusions: (exclusions[id] ?? []).map(screenIslandRect),
+                    exclusions: (exclusions[id] ?? []).filter { !fadedOut($0.motionPath) }.map(screenIslandRect),
                     interactive: interactiveIDs.contains(id)
                 )
             }
@@ -303,22 +345,6 @@
                 return targetView.hitTest(converted, with: event) ?? targetView
             }
             return webHitTest(point, event: event)
-        }
-
-        private func prepareInnerScrollBindings(
-            components: [IslandComponent],
-            scrollContainers: [IslandScrollContainer],
-            exclusions: [String: [IslandRegion]],
-            cutouts: [String: [IslandRegion]]
-        )
-            -> [String: String] {
-            innerScroll.prepare(
-                components: components,
-                scrollContainers: scrollContainers,
-                exclusions: exclusions,
-                cutouts: cutouts,
-                webView: webView
-            )
         }
     }
 

@@ -11,7 +11,7 @@ final class NILayoutValidationTests: XCTestCase {
             "scrollPath": [],
             "plane": "underlay",
             "coordinateSpace": "document",
-            "rect": ["x": 0, "y": 0, "w": 100, "h": 80, "r": 12],
+            "rect": ["x": 0, "y": 0, "w": 100, "h": 80, "r": [12, 12, 12, 12]],
         ],
     ]
 
@@ -30,7 +30,7 @@ final class NILayoutValidationTests: XCTestCase {
                 cutouts: [
                     "map": [[
                         "rect": [
-                            "x": 10, "y": 10, "w": 20, "h": 20, "r": 8,
+                            "x": 10, "y": 10, "w": 20, "h": 20, "r": [8, 8, 8, 8],
                         ],
                         "scrollPath": [],
                         "coordinateSpace": "viewport",
@@ -148,32 +148,58 @@ final class NILayoutValidationTests: XCTestCase {
         }
     }
 
-    func testViewportComponentsCannotDeclareScrollContainers() {
+    func testOpacityIsOptionalAndLiesBetweenZeroAndOne() {
+        func error(_ opacity: Any) -> String? {
+            var faded = components
+            faded[0]["opacity"] = opacity
+            return NILayoutValidation.error(
+                components: faded,
+                order: ["map"],
+                exclusions: [:],
+                cutouts: [:]
+            )
+        }
+
+        XCTAssertNil(error(0.5))
+        XCTAssertNil(error(0))
+        XCTAssertEqual(error(1.5), "component 'map' has an invalid opacity")
+        XCTAssertEqual(error("0.5"), "component 'map' has an invalid opacity")
+        XCTAssertEqual(error(true), "component 'map' has an invalid opacity")
+    }
+
+    func testViewportComponentsAndRegionsCanSitInAPaneFixedToTheViewport() {
         var viewport = components
         viewport[0]["plane"] = "overlay"
         viewport[0]["coordinateSpace"] = "viewport"
         viewport[0]["scrollPath"] = ["feed"]
-
-        XCTAssertEqual(
+        var pane: [String: Any] = [
+            "id": "feed",
+            "scrollPath": [],
+            "coordinateSpace": "viewport",
+            "rect": ["x": 0, "y": 0, "w": 320, "h": 480],
+            "contentWidth": 320,
+            "contentHeight": 960,
+            "offsetX": 0,
+            "offsetY": 0,
+        ]
+        let header: [String: Any] = [
+            "rect": ["x": 0, "y": 0, "w": 320, "h": 40],
+            "scrollPath": ["feed"],
+            "coordinateSpace": "viewport",
+        ]
+        let error = {
             NILayoutValidation.error(
                 components: viewport,
-                scrollContainers: [
-                    [
-                        "id": "feed",
-                        "scrollPath": [],
-                        "rect": ["x": 0, "y": 0, "w": 320, "h": 480],
-                        "contentWidth": 320,
-                        "contentHeight": 960,
-                        "offsetX": 0,
-                        "offsetY": 0,
-                    ],
-                ],
+                scrollContainers: [pane],
                 order: ["map"],
-                exclusions: [:],
-                cutouts: [:]
-            ),
-            "component 'map' viewport coordinates require an empty scroll path"
-        )
+                exclusions: ["map": [header]],
+                cutouts: ["map": [header]]
+            )
+        }
+
+        XCTAssertNil(error())
+        pane["coordinateSpace"] = "screen"
+        XCTAssertEqual(error(), "scroll container 'feed' has an invalid coordinateSpace")
     }
 
     func testRegionsRequireDescriptorsAndKnownCoordinateSpace() {
@@ -267,33 +293,6 @@ final class NILayoutValidationTests: XCTestCase {
                             "h": 480,
                         ],
                         "contentWidth": 100,
-                        "contentHeight": 960,
-                        "offsetX": 0,
-                        "offsetY": 0,
-                    ],
-                ],
-                order: ["map"],
-                exclusions: [:],
-                cutouts: [:]
-            ),
-            "scroll container 'feed' has invalid content size"
-        )
-
-        XCTAssertEqual(
-            NILayoutValidation.error(
-                components: nested,
-                scrollContainers: [
-                    [
-                        "id": "feed",
-                        "scrollPath": [],
-                        "rect": [
-                            "x": 0,
-                            "y": 0,
-                            "w": 320,
-                            "h": 480,
-                        ],
-                        "contentWidth":
-                            NISafeGeometry.maxCoordinateMagnitude + 1,
                         "contentHeight": 960,
                         "offsetX": 0,
                         "offsetY": 0,

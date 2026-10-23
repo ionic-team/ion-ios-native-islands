@@ -9,6 +9,7 @@
     final class NativeIslandsScrollCoordinator {
         private weak var webView: WKWebView?
         private var containers: [String: IslandScrollContainer] = [:]
+        private var paintOrder: [String: Int] = [:]
         private var componentPaths: [String: [String]] = [:]
         private var regionPaths: [String: [[String]]] = [:]
         private var bindings: [String: InnerScrollBinding] = [:]
@@ -38,6 +39,7 @@
             componentPaths.removeAll()
             regionPaths.removeAll()
             containers.removeAll()
+            paintOrder.removeAll()
             webView = nil
         }
 
@@ -49,14 +51,13 @@
             webView: WKWebView?
         )
             -> [String: String] {
+            let previousViews = views
+            let previousBindings = bindings
             reset()
             self.webView = webView
-            containers = Dictionary(
-                uniqueKeysWithValues: scrollContainers.map { ($0.id, $0) }
-            )
-            componentPaths = Dictionary(
-                uniqueKeysWithValues: components.map { ($0.id, $0.scrollPath) }
-            )
+            containers = Dictionary(uniqueKeysWithValues: scrollContainers.map { ($0.id, $0) })
+            paintOrder = Dictionary(uniqueKeysWithValues: scrollContainers.enumerated().map { ($1.id, $0) })
+            componentPaths = Dictionary(uniqueKeysWithValues: components.map { ($0.id, $0.scrollPath) })
             let activeIDs = Set(
                 components
                     .filter { $0.active && $0.rect != nil }
@@ -87,19 +88,58 @@
             }
 
             let candidates = nestedScrollViews(in: webView)
+            let expected = expectedGeometries(ids: referencedIDs, webView: webView)
+            let found = scrollCandidates(candidates, webView: webView)
+            let tolerance = 1.5
             let result = NIScrollContainerMatching.match(
-                descriptors: expectedGeometries(
-                    ids: referencedIDs,
-                    webView: webView
-                ),
-                candidates: scrollCandidates(
-                    candidates,
-                    webView: webView
-                ),
-                tolerance: 1.5
+                descriptors: expected,
+                candidates: found,
+                tolerance: tolerance,
+                optional: Set(
+                    containers.values
+                        .filter { $0.offsetX == 0 && $0.offsetY == 0 }
+                        .map(\.id)
+                )
             )
-            let zoom = webView.scrollView.zoomScale
-            for (id, key) in result.matches {
+            bind(
+                result.matches,
+                candidates: candidates,
+                expected: expected,
+                found: found,
+                tolerance: tolerance,
+                zoom: webView.scrollView.zoomScale
+            )
+            var unmatched = result.failures
+            let bound = Set(views.values.map(ObjectIdentifier.init))
+            for id in expected.keys where result.matches[id] == nil {
+                guard
+                    let scrollView = previousViews[id],
+                    let binding = previousBindings[id],
+                    scrollView.isDescendant(of: webView),
+                    !bound.contains(ObjectIdentifier(scrollView))
+                else {
+                    continue
+                }
+                views[id] = scrollView
+                bindings[id] = binding
+                observe(id, scrollView)
+                unmatched[id] = nil
+            }
+            return failures(
+                components: components,
+                matches: unmatched
+            )
+        }
+
+        private func bind(
+            _ matches: [String: Int],
+            candidates: [UIScrollView],
+            expected: [String: NIScrollContainerDescriptor],
+            found: [NIScrollContainerCandidate],
+            tolerance: Double,
+            zoom: CGFloat
+        ) {
+            for (id, key) in matches {
                 guard
                     candidates.indices.contains(key),
                     let descriptor = containers[id],
@@ -109,25 +149,34 @@
                 }
                 let scrollView = candidates[key]
                 views[id] = scrollView
-                bindings[id] = InnerScrollBinding(
-                    offsetBias: CGPoint(
-                        x: scrollView.contentOffset.x / zoom -
-                            descriptor.offsetX,
-                        y: scrollView.contentOffset.y / zoom -
-                            descriptor.offsetY
+                let settled = expected[id].map {
+                    NIScrollContainerMatching.offsetsMatch(
+                        $0.geometry,
+                        found[key].geometry,
+                        tolerance: tolerance
                     )
+                } ?? true
+                bindings[id] = InnerScrollBinding(
+                    offsetBias: settled
+                        ? CGPoint(
+                            x: scrollView.contentOffset.x / zoom -
+                                descriptor.offsetX,
+                            y: scrollView.contentOffset.y / zoom -
+                                descriptor.offsetY
+                        )
+                        : .zero
                 )
-                observations[id] = scrollView.observe(
-                    \.contentOffset,
-                    options: [.new]
-                ) { [weak self] _, _ in
-                    self?.onChange?(id)
-                }
+                observe(id, scrollView)
             }
-            return failures(
-                components: components,
-                matches: result.failures
-            )
+        }
+
+        private func observe(_ id: String, _ scrollView: UIScrollView) {
+            observations[id] = scrollView.observe(
+                \.contentOffset,
+                options: [.new]
+            ) { [weak self] _, _ in
+                self?.onChange?(id)
+            }
         }
 
         func componentIDs(affectedBy containerID: String) -> [String] {
@@ -144,12 +193,18 @@
             offset(path: path(componentID: componentID))
         }
 
-        func scrollports(componentID: String) -> [IslandRect] {
-            scrollports(path: path(componentID: componentID))
-        }
-
-        func scrollports(path: [String]) -> [IslandRect] {
-            path.compactMap(currentScrollportRect)
+        func scrollports(componentID: String) -> [IslandRegion] {
+            path(componentID: componentID).compactMap { id in
+                containers[id].map {
+                    IslandRegion(
+                        rect: $0.rect,
+                        scrollPath: $0.scrollPath,
+                        coordinateSpace: $0.coordinateSpace,
+                        sticky: nil,
+                        motionPath: $0.motionPath
+                    )
+                }
+            }
         }
 
         func offset(path: [String]) -> CGPoint {
@@ -188,24 +243,23 @@
             )
         }
 
+        func visibleContent(containerID: String) -> CGRect? {
+            guard let descriptor = containers[containerID] else { return nil }
+            let offset = offset(containerID: containerID)
+            return CGRect(
+                x: descriptor.rect.x + offset.x,
+                y: descriptor.rect.y + offset.y,
+                width: descriptor.rect.width,
+                height: descriptor.rect.height
+            )
+        }
+
         private func descriptorOffset(path: [String]) -> CGPoint {
             path.reduce(into: .zero) { result, id in
                 guard let descriptor = containers[id] else { return }
                 result.x += descriptor.offsetX
                 result.y += descriptor.offsetY
             }
-        }
-
-        private func currentScrollportRect(id: String) -> IslandRect? {
-            guard let descriptor = containers[id] else { return nil }
-            let ancestorOffset = offset(path: descriptor.scrollPath)
-            return IslandRect(
-                x: descriptor.rect.x - ancestorOffset.x,
-                y: descriptor.rect.y - ancestorOffset.y,
-                width: descriptor.rect.width,
-                height: descriptor.rect.height,
-                cornerRadius: descriptor.rect.cornerRadius
-            )
         }
 
         private func expectedGeometries(
@@ -220,15 +274,16 @@
                 let ancestorOffset = descriptorOffset(
                     path: descriptor.scrollPath
                 )
+                let documentOffset = descriptor.coordinateSpace == .document ? rootOffset : .zero
                 values[id] = NIScrollContainerDescriptor(
                     geometry: NIScrollContainerGeometry(
                         x: Double(
                             (descriptor.rect.x - ancestorOffset.x) * zoom -
-                                rootOffset.x
+                                documentOffset.x
                         ),
                         y: Double(
                             (descriptor.rect.y - ancestorOffset.y) * zoom -
-                                rootOffset.y
+                                documentOffset.y
                         ),
                         width: Double(descriptor.rect.width * zoom),
                         height: Double(descriptor.rect.height * zoom),
@@ -237,7 +292,8 @@
                         offsetX: Double(descriptor.offsetX * zoom),
                         offsetY: Double(descriptor.offsetY * zoom)
                     ),
-                    scrollPath: descriptor.scrollPath
+                    scrollPath: descriptor.scrollPath,
+                    order: paintOrder[id] ?? 0
                 )
             }
         }

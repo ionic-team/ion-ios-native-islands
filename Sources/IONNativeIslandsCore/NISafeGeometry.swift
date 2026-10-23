@@ -6,17 +6,10 @@ struct NISafeRectValues: Equatable {
     let y: Double
     let width: Double
     let height: Double
-    let cornerRadius: Double
+    let cornerRadii: NICornerRadii
 }
 
 enum NISafeGeometry {
-    /// CSS coordinates remain exact when converted through the Float-backed native
-    /// rendering path up to 2^24. Extents use a smaller explicit allocation bound.
-    static let maxCoordinateMagnitude =
-        NIBridgeContract.maxCoordinateMagnitudeCSSPixels
-    static let maxExtent = NIBridgeContract.maxSizeCSSPixels
-    static let maxRadius = NIBridgeContract.maxRadiusCSSPixels
-
     static func parseRect(_ value: [String: Any]) -> NISafeRectValues? {
         guard
             let x = strictNumber(value["x"]),
@@ -27,23 +20,24 @@ enum NISafeGeometry {
             return nil
         }
 
-        let cornerRadius: Double
-        if let rawRadius = value["r"] {
-            guard let radius = strictNumber(rawRadius) else { return nil }
-            cornerRadius = radius
+        let radii: [Double]
+        if let rawRadii = value["r"] {
+            guard
+                let list = rawRadii as? [Any],
+                list.count == 4
+            else {
+                return nil
+            }
+            radii = list.compactMap(strictNumber)
+            guard radii.count == 4 else { return nil }
         } else {
-            cornerRadius = 0
+            radii = [0, 0, 0, 0]
         }
 
         guard
-            abs(x) <= maxCoordinateMagnitude,
-            abs(y) <= maxCoordinateMagnitude,
             width > 0,
-            width <= maxExtent,
             height > 0,
-            height <= maxExtent,
-            cornerRadius >= 0,
-            cornerRadius <= maxRadius
+            radii.allSatisfy({ $0 >= 0 })
         else {
             return nil
         }
@@ -53,7 +47,12 @@ enum NISafeGeometry {
             y: y,
             width: width,
             height: height,
-            cornerRadius: cornerRadius
+            cornerRadii: NICornerRadii(
+                topLeft: radii[0],
+                topRight: radii[1],
+                bottomRight: radii[2],
+                bottomLeft: radii[3]
+            )
         )
     }
 

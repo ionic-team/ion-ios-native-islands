@@ -28,7 +28,9 @@
                         plane: plane,
                         coordinateSpace: coordinateSpace,
                         interactive: boolean(value["interactive"]) ?? false,
-                        active: boolean(value["active"]) ?? false
+                        active: boolean(value["active"]) ?? false,
+                        opacity: NISafeGeometry.strictNumber(value["opacity"]).map { CGFloat($0) } ?? 1,
+                        motionPath: NIMotionPayload.path(value["motionPath"])
                     ),
                     type
                 )
@@ -63,13 +65,36 @@
                 return IslandScrollContainer(
                     id: id,
                     rect: rect,
+                    coordinateSpace: (value["coordinateSpace"] as? String)
+                        .flatMap(NICoordinateSpace.init(rawValue:)) ?? .document,
                     scrollPath: value["scrollPath"] as? [String] ?? [],
                     contentWidth: CGFloat(contentWidth),
                     contentHeight: CGFloat(contentHeight),
                     offsetX: CGFloat(offsetX),
-                    offsetY: CGFloat(offsetY)
+                    offsetY: CGFloat(offsetY),
+                    motionPath: NIMotionPayload.path(value["motionPath"])
                 )
             }
+        }
+
+        static func panes(from value: Any?) -> [String: IslandPane]? {
+            guard let value else { return [:] }
+            guard let entries = value as? [String: Any] else { return nil }
+            var panes: [String: IslandPane] = [:]
+            for (id, raw) in entries {
+                guard
+                    let entry = raw as? [String: Any],
+                    let color = NICanvasColor(entry["color"]),
+                    entry["under"] == nil || entry["under"] is String
+                else {
+                    return nil
+                }
+                panes[id] = IslandPane(
+                    color: UIColor(red: color.red, green: color.green, blue: color.blue, alpha: 1),
+                    under: entry["under"] as? String
+                )
+            }
+            return panes
         }
 
         static func regions(
@@ -96,7 +121,10 @@
                     return IslandRegion(
                         rect: rect,
                         scrollPath: scrollPath,
-                        coordinateSpace: coordinateSpace
+                        coordinateSpace: coordinateSpace,
+                        sticky: NISticky(value["sticky"]),
+                        motionPath: NIMotionPayload.path(value["motionPath"]),
+                        color: NITintColor(value["color"])
                     )
                 }
             }
@@ -114,7 +142,7 @@
                 y: CGFloat(rect.y),
                 width: CGFloat(rect.width),
                 height: CGFloat(rect.height),
-                cornerRadius: CGFloat(rect.cornerRadius)
+                cornerRadii: rect.cornerRadii
             )
         }
 

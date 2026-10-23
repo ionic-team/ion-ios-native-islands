@@ -1,21 +1,21 @@
 #if canImport(UIKit)
-    import Foundation
+    import UIKit
 
     extension NativeIslandsController {
         func dispatchCommandOnMain(
-            version: Int,
             island: String,
             requestedType: String,
             method: String,
             params: [String: Any],
+            instance: Int?,
             completion: ([String: Any]) -> Void
         ) {
             if let failure = commandValidationFailure(
-                version: version,
                 island: island,
                 requestedType: requestedType,
                 method: method,
-                params: params
+                params: params,
+                instance: instance
             ) {
                 completion(failure)
                 return
@@ -31,7 +31,7 @@
             }
 
             if let target = islands[island] {
-                deliver(id: island, target, method: method, properties: params)
+                deliver(id: island, target, method: method, properties: params, instance: instance)
             } else if lifecycle.isErrored(id: island) {
                 completion(
                     error(
@@ -41,28 +41,22 @@
                 )
                 return
             } else {
-                let result = lifecycle.buffer(
+                lifecycle.buffer(
                     id: island,
                     method: method,
-                    payload: params
+                    payload: params,
+                    instance: instance
                 )
-                if let message = pendingErrorMessage(for: result) {
-                    if registration == .registered {
-                        lifecycle.removeType(id: island)
-                    }
-                    completion(error(code: "invalid_request", message: message))
-                    return
-                }
             }
             completion(["value": NSNull()])
         }
 
         private func commandValidationFailure(
-            version: Int,
             island: String,
             requestedType: String,
             method: String,
-            params: [String: Any]
+            params: [String: Any],
+            instance: Int?
         )
             -> [String: Any]? {
             if let registered = lifecycle.type(for: island),
@@ -74,11 +68,11 @@
             }
             do {
                 try security.validateCommand(
-                    version: version,
                     island: island,
                     type: requestedType,
                     method: method,
-                    params: params
+                    params: params,
+                    instance: instance
                 )
                 return nil
             } catch let exception as NIBridgeSecurityError {
@@ -103,25 +97,90 @@
                     code: "invalid_request",
                     message: "component type does not match its registered layout type"
                 )
-            case .capacityExceeded:
-                error(
-                    code: "invalid_request",
-                    message: "too many tracked component types"
-                )
             }
         }
 
-        private func pendingErrorMessage(
-            for result: NIPendingCommandResult
-        )
-            -> String? {
-            switch result {
-            case .buffered:
-                nil
-            case .pendingIDLimitExceeded:
-                "too many components have pending commands"
-            case .pendingCommandLimitExceeded:
-                "too many pending commands for component"
+        func constructIsland(id: String, type: String, replacing: Bool = false) -> NativeIsland? {
+            let registration = NativeIslandsRegistry.entry(for: type)
+            let component: NativeIsland
+            switch NIFactoryConstruction.run(registration?.factory) {
+            case .created(let created):
+                component = created
+            case .missing:
+                reportError(id: id, reason: "unknown_type:\(type)")
+                return nil
+            case .failed(let errorType):
+                reportError(
+                    id: id,
+                    reason: "handler_failed: factory_failed:\(type):\(errorType)"
+                )
+                return nil
+            }
+            islands[id] = component
+            if let emitting = component as? NativeIslandEventEmitting {
+                emitting.eventSink = { [weak self, weak component] event, payload in
+                    guard let self, let component else { return }
+                    self.onMain {
+                        guard self.islands[id] === component else { return }
+                        var data = payload
+                        data["island"] = id
+                        if let instance = self.lifecycle.instance(for: id) { data["instance"] = instance }
+                        self.events(event, data)
+                    }
+                }
+            }
+            ensureContainer(webView: webView)
+            if replacing {
+                container.replaceIslandView(id: id, view: component.view)
+            } else {
+                container.registerIsland(
+                    id: id,
+                    view: component.view,
+                    accessibility: registration?.accessibility ?? .web
+                )
+            }
+            if hostResumed {
+                component.onResume()
+            } else {
+                component.onPause()
+            }
+            return component
+        }
+
+        func deliver(
+            id: String,
+            _ island: NativeIsland,
+            method: String,
+            properties: [String: Any],
+            instance: Int?
+        ) {
+            switch method {
+            case "create":
+                guard let instance else {
+                    return assertionFailure("validation guarantees a create names its instance")
+                }
+                switch lifecycle.create(id: id, instance: instance) {
+                case .create:
+                    island.create(properties: properties)
+                case .update:
+                    island.update(properties: properties)
+                case .recreate:
+                    (island as? NativeIslandEventEmitting)?.eventSink = nil
+                    guard let type = lifecycle.type(for: id),
+                          let replacement = constructIsland(id: id, type: type, replacing: true)
+                    else {
+                        container.removeIsland(id: id)
+                        islands[id] = nil
+                        island.onDestroy()
+                        return
+                    }
+                    island.onDestroy()
+                    replacement.create(properties: properties)
+                }
+            case "update":
+                island.update(properties: properties)
+            default:
+                assertionFailure("unsupported native component command '\(method)'")
             }
         }
     }

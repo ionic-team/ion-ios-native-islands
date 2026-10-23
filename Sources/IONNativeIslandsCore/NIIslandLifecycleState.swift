@@ -1,37 +1,26 @@
 struct NIPendingCommand<Payload> {
     let method: String
     let payload: Payload
+    var instance: Int?
+}
+
+enum NICreation: Equatable {
+    case create
+    case update
+    case recreate
 }
 
 enum NITypeRegistrationResult: Equatable {
     case registered
     case matched
     case typeMismatch
-    case capacityExceeded
-}
-
-enum NIPendingCommandResult: Equatable {
-    case buffered
-    case pendingIDLimitExceeded
-    case pendingCommandLimitExceeded
 }
 
 final class NIIslandLifecycleState<Payload> {
-    static var maxTrackedTypes: Int {
-        256
-    }
-
-    static var maxPendingIDs: Int {
-        64
-    }
-
-    static var maxPendingCommandsPerID: Int {
-        32
-    }
-
     private var types: [String: String] = [:]
     private var pending: [String: [NIPendingCommand<Payload>]] = [:]
     private var errored: Set<String> = []
+    private var instances: [String: Int] = [:]
 
     func type(for id: String) -> String? {
         types[id]
@@ -41,9 +30,6 @@ final class NIIslandLifecycleState<Payload> {
         if let existing = types[id] {
             return existing == type ? .matched : .typeMismatch
         }
-        guard types.count < Self.maxTrackedTypes else {
-            return .capacityExceeded
-        }
         types[id] = type
         return .registered
     }
@@ -52,30 +38,38 @@ final class NIIslandLifecycleState<Payload> {
         types[id] = nil
         pending[id] = nil
         errored.remove(id)
+        instances[id] = nil
     }
 
     func retain(ids: Set<String>) {
         types = types.filter { ids.contains($0.key) }
         pending = pending.filter { ids.contains($0.key) }
         errored.formIntersection(ids)
+        instances = instances.filter { ids.contains($0.key) }
+    }
+
+    func create(id: String, instance: Int) -> NICreation {
+        defer { instances[id] = instance }
+        switch instances[id] {
+        case nil: return .create
+        case instance: return .update
+        default: return .recreate
+        }
+    }
+
+    func instance(for id: String) -> Int? {
+        instances[id]
     }
 
     func buffer(
         id: String,
         method: String,
-        payload: Payload
-    )
-        -> NIPendingCommandResult {
-        if pending[id] == nil, pending.count >= Self.maxPendingIDs {
-            return .pendingIDLimitExceeded
-        }
-        if pending[id, default: []].count >= Self.maxPendingCommandsPerID {
-            return .pendingCommandLimitExceeded
-        }
+        payload: Payload,
+        instance: Int? = nil
+    ) {
         pending[id, default: []].append(
-            NIPendingCommand(method: method, payload: payload)
+            NIPendingCommand(method: method, payload: payload, instance: instance)
         )
-        return .buffered
     }
 
     func drain(id: String) -> [NIPendingCommand<Payload>] {
@@ -85,6 +79,7 @@ final class NIIslandLifecycleState<Payload> {
 
     func markErrored(id: String) -> Bool {
         pending[id] = nil
+        instances[id] = nil
         return errored.insert(id).inserted
     }
 
@@ -96,6 +91,7 @@ final class NIIslandLifecycleState<Payload> {
         types.removeAll()
         pending.removeAll()
         errored.removeAll()
+        instances.removeAll()
     }
 
     func clear() {

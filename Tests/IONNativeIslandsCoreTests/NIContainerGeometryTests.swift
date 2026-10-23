@@ -66,7 +66,7 @@ final class NIContainerGeometryTests: XCTestCase {
         )
     }
 
-    func testViewportCoordinatesIgnoreEveryScrollOffset() {
+    func testViewportCoordinatesMoveWithTheirScrollersButNotTheDocument() {
         XCTAssertEqual(
             NIContainerGeometry.screenRect(
                 x: 20,
@@ -78,48 +78,40 @@ final class NIContainerGeometryTests: XCTestCase {
                 zoom: 2,
                 rootOffset: CGPoint(x: 10, y: 30)
             ),
-            CGRect(x: 40, y: 60, width: 80, height: 40)
+            CGRect(x: -10, y: -60, width: 80, height: 40)
         )
     }
 
     func testRoundedRectRejectsTransparentCorners() {
         let rect = CGRect(x: 20, y: 40, width: 200, height: 120)
+        let pill = NICornerRadii(uniform: 160)
 
-        XCTAssertFalse(
-            NIContainerGeometry.contains(
-                point: CGPoint(x: 20, y: 40),
-                in: rect,
-                cornerRadius: 160
-            )
-        )
-        XCTAssertTrue(
-            NIContainerGeometry.contains(
-                point: CGPoint(x: 120, y: 100),
-                in: rect,
-                cornerRadius: 160
-            )
-        )
-        XCTAssertTrue(
-            NIContainerGeometry.contains(
-                point: CGPoint(x: 30, y: 100),
-                in: rect,
-                cornerRadius: 160
-            )
-        )
-        XCTAssertFalse(
-            NIContainerGeometry.contains(
-                point: CGPoint(x: 19, y: 100),
-                in: rect,
-                cornerRadius: 160
-            )
-        )
+        XCTAssertFalse(pill.contains(CGPoint(x: 20, y: 40), in: rect))
+        XCTAssertTrue(pill.contains(CGPoint(x: 120, y: 100), in: rect))
+        XCTAssertTrue(pill.contains(CGPoint(x: 30, y: 100), in: rect))
+        XCTAssertFalse(pill.contains(CGPoint(x: 19, y: 100), in: rect))
+        XCTAssertEqual(pill.fitted(to: rect.size), NICornerRadii(uniform: 60))
+    }
+
+    func testCornersRoundIndependently() {
+        let rect = CGRect(x: 0, y: 0, width: 200, height: 100)
+        let top = NICornerRadii(topLeft: 100, topRight: 100, bottomRight: 0, bottomLeft: 0)
+
+        XCTAssertFalse(top.contains(CGPoint(x: 2, y: 2), in: rect))
+        XCTAssertTrue(top.contains(CGPoint(x: 1, y: 99), in: rect))
+        XCTAssertTrue(top.contains(CGPoint(x: 199, y: 99), in: rect))
+        XCTAssertEqual(top.fitted(to: rect.size), top)
+        XCTAssertNil(top.sharedRadius(in: rect.size))
         XCTAssertEqual(
-            NIContainerGeometry.clampedCornerRadius(
-                width: 200,
-                height: 120,
-                cornerRadius: 160
-            ),
-            60
+            NICornerRadii(topLeft: 16, topRight: 16, bottomRight: 0, bottomLeft: 0)
+                .sharedRadius(in: rect.size),
+            16
         )
+        XCTAssertEqual(NICornerRadii.square.sharedRadius(in: rect.size), 0)
+
+        let path = top.path(in: rect)
+        XCTAssertFalse(path.contains(CGPoint(x: 2, y: 2)))
+        XCTAssertTrue(path.contains(CGPoint(x: 100, y: 50)))
+        XCTAssertTrue(path.contains(CGPoint(x: 1, y: 99)))
     }
 }

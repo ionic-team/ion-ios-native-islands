@@ -76,10 +76,15 @@ final class BadgeIsland:
 }
 ```
 
-The runtime accepts only `create` and `update`. It validates protocol version,
-component identity, JSON compatibility, and payload size before
-calling the component. `NativeIslandEventEmitting` is optional; emitted payloads
-are stamped with the island id.
+The runtime accepts only `create` and `update`. It validates component identity and
+JSON compatibility before calling the component. Each `create` call includes the web
+instance ID. Matching the current instance updates the existing component, while a new
+instance replaces it with a fresh component from the factory.
+`NativeIslandEventEmitting` is optional and stamps emitted payloads with the island ID
+and instance. Events from replaced or disposed components are ignored.
+
+`applyLayout` passes the applied page-clock timestamp to its completion closure, or
+`nil` if a newer layout superseded a pending retry.
 
 `onResume`, `onPause`, `onDestroy`, and `setViewportVisible` have default
 implementations. Components that own active resources should use those callbacks
@@ -99,9 +104,8 @@ Do not move the WebView or individual island hosts separately.
 
 ## Errors
 
-Command failures use stable codes: `invalid_request`, `unknown_command`,
-`handler_failed`, `payload_too_large`, `unsupported_version`, and
-`internal_error`. A factory failure emits `islandError` for only the affected
+Command failures use the codes `invalid_request`, `unknown_command`, `handler_failed`,
+and `internal_error`. A factory failure emits `islandError` for only the affected
 component.
 
 ## Requirements
