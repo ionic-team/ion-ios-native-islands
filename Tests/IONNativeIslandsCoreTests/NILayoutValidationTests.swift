@@ -165,6 +165,32 @@ final class NILayoutValidationTests: XCTestCase {
         XCTAssertEqual(error(1.5), "component 'map' has an invalid opacity")
         XCTAssertEqual(error("0.5"), "component 'map' has an invalid opacity")
         XCTAssertEqual(error(true), "component 'map' has an invalid opacity")
+
+        var turned = components
+        turned[0]["transform"] = ["size": [100, 80], "matrix": [1, 0, 0.5, 1, 0, 0]]
+        XCTAssertNil(NILayoutValidation.error(components: turned, order: ["map"], exclusions: [:], cutouts: [:]))
+        turned[0]["transform"] = ["size": [100, 80], "matrix": [1, 0, 0, 1]]
+        XCTAssertEqual(
+            NILayoutValidation.error(components: turned, order: ["map"], exclusions: [:], cutouts: [:]),
+            "component 'map' has an invalid transform"
+        )
+    }
+
+    func testPortalIsOptionalNonEmptyStringIdentifier() {
+        func error(_ portal: Any) -> String? {
+            var item = components
+            item[0]["portal"] = portal
+            return NILayoutValidation.error(
+                components: item,
+                order: ["map"],
+                exclusions: [:],
+                cutouts: [:]
+            )
+        }
+
+        XCTAssertNil(error("card:weather"))
+        XCTAssertEqual(error(""), "component 'map' has an invalid portal")
+        XCTAssertEqual(error(42), "component 'map' has an invalid portal")
     }
 
     func testViewportComponentsAndRegionsCanSitInAPaneFixedToTheViewport() {

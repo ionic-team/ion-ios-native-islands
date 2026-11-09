@@ -13,8 +13,34 @@ final class NIScrollContainerMatchingTests: XCTestCase {
         offsetY: 120
     )
 
-    func testMatchesOneCandidateWithinTolerance() {
-        let candidate = NIScrollContainerGeometry(
+    private let inner = NIScrollContainerGeometry(
+        x: 16,
+        y: 180,
+        width: 364,
+        height: 220,
+        contentWidth: 364,
+        contentHeight: 660,
+        offsetX: 0,
+        offsetY: 40
+    )
+
+    private func match(
+        _ descriptors: [String: NIScrollContainerDescriptor],
+        _ candidates: [NIScrollContainerCandidate],
+        tolerance: Double = 1,
+        optional: Set<String> = []
+    )
+        -> NIScrollContainerMatchResult {
+        NIScrollContainerMatching.match(
+            descriptors: descriptors,
+            candidates: candidates,
+            tolerance: tolerance,
+            optional: optional
+        )
+    }
+
+    func testALoneScrollViewWithinToleranceMatchesAndNoneIsMissing() {
+        let near = NIScrollContainerGeometry(
             x: 16.5,
             y: 71.5,
             width: 364,
@@ -24,93 +50,40 @@ final class NIScrollContainerMatchingTests: XCTestCase {
             offsetX: 0,
             offsetY: 120.5
         )
-
-        XCTAssertEqual(
-            NIScrollContainerMatching.match(
-                descriptors: [
-                    "main": NIScrollContainerDescriptor(geometry: main),
-                ],
-                candidates: [
-                    NIScrollContainerCandidate(
-                        key: 4,
-                        geometry: candidate
-                    ),
-                ],
-                tolerance: 1
-            ),
-            NIScrollContainerMatchResult(
-                matches: ["main": 4],
-                failures: [:]
+        let bounced = main.with(contentWidth: 900, offsetX: -40, offsetY: -120)
+        for (sent, drawn) in [(main, near), (bounced, bounced)] {
+            XCTAssertEqual(
+                match(["main": NIScrollContainerDescriptor(geometry: sent)], [NIScrollContainerCandidate(key: 4, geometry: drawn)]),
+                NIScrollContainerMatchResult(matches: ["main": 4], failures: [:])
             )
-        )
-    }
-
-    func testRejectsAMissingCandidate() {
-        let missing = NIScrollContainerMatching.match(
-            descriptors: [
-                "main": NIScrollContainerDescriptor(geometry: main),
-            ],
-            candidates: [],
-            tolerance: 1
-        )
-        XCTAssertEqual(missing.failures["main"], .missing)
+        }
+        XCTAssertEqual(match(["main": NIScrollContainerDescriptor(geometry: main)], []).failures["main"], .missing)
     }
 
     func testLookalikeScrollersPairWithScrollViewsFromTheTop() {
-        let two = NIScrollContainerMatching.match(
-            descriptors: [
-                "lower": NIScrollContainerDescriptor(geometry: main, order: 1),
-                "upper": NIScrollContainerDescriptor(geometry: main, order: 0),
-            ],
-            candidates: [
-                NIScrollContainerCandidate(key: 3, geometry: main),
-                NIScrollContainerCandidate(key: 7, geometry: main),
-            ],
-            tolerance: 1
-        )
+        let descriptors = [
+            "lower": NIScrollContainerDescriptor(geometry: main, order: 1),
+            "upper": NIScrollContainerDescriptor(geometry: main, order: 0),
+        ]
+        let two = match(descriptors, [
+            NIScrollContainerCandidate(key: 3, geometry: main),
+            NIScrollContainerCandidate(key: 7, geometry: main),
+        ])
         XCTAssertEqual(two.matches, ["upper": 7, "lower": 3])
         XCTAssertTrue(two.failures.isEmpty)
 
-        let one = NIScrollContainerMatching.match(
-            descriptors: [
-                "lower": NIScrollContainerDescriptor(geometry: main, order: 1),
-                "upper": NIScrollContainerDescriptor(geometry: main, order: 0),
-            ],
-            candidates: [NIScrollContainerCandidate(key: 1, geometry: main)],
-            tolerance: 1
-        )
+        let one = match(descriptors, [NIScrollContainerCandidate(key: 1, geometry: main)])
         XCTAssertEqual(one.matches, ["upper": 1])
         XCTAssertEqual(one.failures, ["lower": .sharedCandidate])
     }
 
     func testDifferentScrollersNeverShareAScrollView() {
-        let other = NIScrollContainerGeometry(
-            x: main.x,
-            y: main.y,
-            width: main.width,
-            height: main.height,
-            contentWidth: main.contentWidth,
-            contentHeight: main.contentHeight,
-            offsetX: main.offsetX,
-            offsetY: 300
-        )
-        let live = NIScrollContainerGeometry(
-            x: main.x,
-            y: main.y,
-            width: main.width,
-            height: main.height,
-            contentWidth: main.contentWidth,
-            contentHeight: main.contentHeight,
-            offsetX: main.offsetX,
-            offsetY: 200
-        )
-        let result = NIScrollContainerMatching.match(
-            descriptors: [
+        let result = match(
+            [
                 "first": NIScrollContainerDescriptor(geometry: main),
-                "second": NIScrollContainerDescriptor(geometry: other, order: 1),
+                "second": NIScrollContainerDescriptor(geometry: main.with(offsetY: 300), order: 1),
             ],
-            candidates: [NIScrollContainerCandidate(key: 1, geometry: live)],
-            tolerance: 1
+            [NIScrollContainerCandidate(key: 1, geometry: main.with(offsetY: 200))]
         )
         XCTAssertEqual(result.failures["first"], .sharedCandidate)
         XCTAssertEqual(result.failures["second"], .sharedCandidate)
@@ -118,280 +91,71 @@ final class NIScrollContainerMatchingTests: XCTestCase {
     }
 
     func testCurrentOffsetParticipatesInMatching() {
-        func scrolled(to offsetY: Double) -> NIScrollContainerGeometry {
-            NIScrollContainerGeometry(
-                x: main.x,
-                y: main.y,
-                width: main.width,
-                height: main.height,
-                contentWidth: main.contentWidth,
-                contentHeight: main.contentHeight,
-                offsetX: main.offsetX,
-                offsetY: offsetY
-            )
-        }
-        let descriptors = [
-            "main": NIScrollContainerDescriptor(geometry: main),
-        ]
-
+        let descriptors = ["main": NIScrollContainerDescriptor(geometry: main)]
         XCTAssertEqual(
-            NIScrollContainerMatching.match(
-                descriptors: descriptors,
-                candidates: [
-                    NIScrollContainerCandidate(key: 1, geometry: scrolled(to: 0)),
-                    NIScrollContainerCandidate(key: 2, geometry: main),
-                ],
-                tolerance: 1
-            ).matches,
+            match(descriptors, [
+                NIScrollContainerCandidate(key: 1, geometry: main.with(offsetY: 0)),
+                NIScrollContainerCandidate(key: 2, geometry: main),
+            ]).matches,
             ["main": 2]
         )
 
-        let moved = NIScrollContainerMatching.match(
-            descriptors: descriptors,
-            candidates: [
-                NIScrollContainerCandidate(key: 1, geometry: scrolled(to: 0)),
-                NIScrollContainerCandidate(key: 2, geometry: scrolled(to: 300)),
-            ],
-            tolerance: 1
-        )
+        let moved = match(descriptors, [
+            NIScrollContainerCandidate(key: 1, geometry: main.with(offsetY: 0)),
+            NIScrollContainerCandidate(key: 2, geometry: main.with(offsetY: 300)),
+        ])
         XCTAssertTrue(moved.matches.isEmpty)
         XCTAssertEqual(moved.failures["main"], .ambiguous)
     }
 
     func testMatchesTheOnlyScrollerThatMovedAfterTheWebSampledIt() {
-        let live = NIScrollContainerGeometry(
-            x: main.x,
-            y: main.y,
-            width: main.width,
-            height: main.height,
-            contentWidth: main.contentWidth,
-            contentHeight: main.contentHeight,
-            offsetX: main.offsetX,
-            offsetY: main.offsetY + 10
-        )
-
+        let descriptors = ["main": NIScrollContainerDescriptor(geometry: main)]
+        let live = main.with(offsetY: main.offsetY + 10)
         XCTAssertEqual(
-            NIScrollContainerMatching.match(
-                descriptors: [
-                    "main": NIScrollContainerDescriptor(geometry: main),
-                ],
-                candidates: [NIScrollContainerCandidate(key: 1, geometry: live)],
-                tolerance: 1
-            ),
+            match(descriptors, [NIScrollContainerCandidate(key: 1, geometry: live)]),
             NIScrollContainerMatchResult(matches: ["main": 1], failures: [:])
         )
-        XCTAssertFalse(
-            NIScrollContainerMatching.offsetsMatch(main, live, tolerance: 1)
-        )
+        XCTAssertFalse(NIScrollContainerMatching.offsetsMatch(main, live, tolerance: 1))
 
-        let resized = NIScrollContainerGeometry(
-            x: main.x,
-            y: main.y,
-            width: main.width,
-            height: main.height,
-            contentWidth: main.contentWidth,
-            contentHeight: main.contentHeight + 40,
-            offsetX: main.offsetX,
-            offsetY: main.offsetY + 10
-        )
-        XCTAssertEqual(
-            NIScrollContainerMatching.match(
-                descriptors: [
-                    "main": NIScrollContainerDescriptor(geometry: main),
-                ],
-                candidates: [
-                    NIScrollContainerCandidate(key: 1, geometry: resized),
-                ],
-                tolerance: 1
-            ).failures["main"],
-            .missing
-        )
+        let resized = live.with(contentHeight: main.contentHeight + 40)
+        XCTAssertEqual(match(descriptors, [NIScrollContainerCandidate(key: 1, geometry: resized)]).failures["main"], .missing)
     }
 
-    func testPreservesSignedBounceOffsets() {
-        let reversed = NIScrollContainerGeometry(
-            x: main.x,
-            y: main.y,
-            width: main.width,
-            height: main.height,
-            contentWidth: 900,
-            contentHeight: main.contentHeight,
-            offsetX: -40,
-            offsetY: -120
-        )
-
-        XCTAssertEqual(
-            NIScrollContainerMatching.match(
-                descriptors: [
-                    "reversed": NIScrollContainerDescriptor(
-                        geometry: reversed
-                    ),
-                ],
-                candidates: [
-                    NIScrollContainerCandidate(
-                        key: 3,
-                        geometry: reversed
-                    ),
-                ],
-                tolerance: 1
-            ).matches["reversed"],
-            3
-        )
-    }
-
-    func testMatchesNestedCandidatesByAncestorPath() {
-        let inner = NIScrollContainerGeometry(
-            x: 16,
-            y: 180,
-            width: 364,
-            height: 220,
-            contentWidth: 364,
-            contentHeight: 660,
-            offsetX: 0,
-            offsetY: 40
-        )
-        let result = NIScrollContainerMatching.match(
-            descriptors: [
-                "outer": NIScrollContainerDescriptor(geometry: main),
-                "inner": NIScrollContainerDescriptor(
-                    geometry: inner,
-                    scrollPath: ["outer"]
-                ),
-            ],
-            candidates: [
-                NIScrollContainerCandidate(key: 2, geometry: main),
-                NIScrollContainerCandidate(
-                    key: 4,
-                    geometry: inner,
-                    ancestorKeys: [2]
-                ),
-            ],
-            tolerance: 1
-        )
-
-        XCTAssertEqual(result.matches, ["outer": 2, "inner": 4])
-        XCTAssertTrue(result.failures.isEmpty)
-    }
-
-    func testUsesUniqueGeometryWhenWebKitHierarchyIsFlat() {
-        let inner = NIScrollContainerGeometry(
-            x: 16,
-            y: 180,
-            width: 364,
-            height: 220,
-            contentWidth: 364,
-            contentHeight: 660,
-            offsetX: 0,
-            offsetY: 40
-        )
-        let result = NIScrollContainerMatching.match(
-            descriptors: [
-                "outer": NIScrollContainerDescriptor(geometry: main),
-                "inner": NIScrollContainerDescriptor(
-                    geometry: inner,
-                    scrollPath: ["outer"]
-                ),
-            ],
-            candidates: [
-                NIScrollContainerCandidate(key: 2, geometry: main),
-                NIScrollContainerCandidate(
-                    key: 4,
-                    geometry: inner,
-                    ancestorKeys: []
-                ),
-            ],
-            tolerance: 1
-        )
-
-        XCTAssertEqual(result.matches, ["outer": 2, "inner": 4])
-        XCTAssertTrue(result.failures.isEmpty)
-    }
-
-    func testUsesTopologyToDisambiguateEqualNestedCandidates() {
-        let inner = NIScrollContainerGeometry(
-            x: 16,
-            y: 180,
-            width: 364,
-            height: 220,
-            contentWidth: 364,
-            contentHeight: 660,
-            offsetX: 0,
-            offsetY: 40
-        )
-        let result = NIScrollContainerMatching.match(
-            descriptors: [
-                "outer": NIScrollContainerDescriptor(geometry: main),
-                "inner": NIScrollContainerDescriptor(
-                    geometry: inner,
-                    scrollPath: ["outer"]
-                ),
-            ],
-            candidates: [
-                NIScrollContainerCandidate(key: 2, geometry: main),
-                NIScrollContainerCandidate(
-                    key: 4,
-                    geometry: inner,
-                    ancestorKeys: [2]
-                ),
-                NIScrollContainerCandidate(
-                    key: 6,
-                    geometry: inner,
-                    ancestorKeys: []
-                ),
-            ],
-            tolerance: 1
-        )
-
-        XCTAssertEqual(result.matches, ["outer": 2, "inner": 4])
-        XCTAssertTrue(result.failures.isEmpty)
+    func testANestedScrollerMatchesItsScrollViewByAncestryOrUniqueGeometry() {
+        let descriptors = [
+            "outer": NIScrollContainerDescriptor(geometry: main),
+            "inner": NIScrollContainerDescriptor(geometry: inner, scrollPath: ["outer"]),
+        ]
+        let outer = NIScrollContainerCandidate(key: 2, geometry: main)
+        let nested = NIScrollContainerCandidate(key: 4, geometry: inner, ancestorKeys: [2])
+        let flat = NIScrollContainerCandidate(key: 4, geometry: inner, ancestorKeys: [])
+        let stray = NIScrollContainerCandidate(key: 6, geometry: inner, ancestorKeys: [])
+        for candidates in [[outer, nested], [outer, flat], [outer, nested, stray]] {
+            let result = match(descriptors, candidates)
+            XCTAssertEqual(result.matches, ["outer": 2, "inner": 4])
+            XCTAssertTrue(result.failures.isEmpty)
+        }
     }
 
     func testEqualScrollportsBindTheTopmostScrollView() {
         let descriptor = NIScrollContainerDescriptor(geometry: main)
         let first = NIScrollContainerCandidate(key: 3, geometry: main)
         let second = NIScrollContainerCandidate(key: 7, geometry: main)
-
         for candidates in [[first, second], [second, first]] {
-            let result = NIScrollContainerMatching.match(
-                descriptors: ["main": descriptor],
-                candidates: candidates,
-                tolerance: 1
-            )
+            let result = match(["main": descriptor], candidates)
             XCTAssertEqual(result.matches, ["main": second.key])
             XCTAssertTrue(result.failures.isEmpty)
         }
 
-        let moving = NIScrollContainerGeometry(
-            x: main.x,
-            y: main.y,
-            width: main.width,
-            height: main.height,
-            contentWidth: main.contentWidth,
-            contentHeight: main.contentHeight,
-            offsetX: main.offsetX,
-            offsetY: 248
-        )
-        let movingDescriptor = NIScrollContainerDescriptor(geometry: moving)
-        let movingCandidate = NIScrollContainerCandidate(
-            key: first.key,
-            geometry: moving
-        )
-
+        let moving = main.with(offsetY: 248)
         XCTAssertEqual(
-            NIScrollContainerMatching.match(
-                descriptors: ["main": movingDescriptor],
-                candidates: [second, movingCandidate],
-                tolerance: 1
+            match(
+                ["main": NIScrollContainerDescriptor(geometry: moving)],
+                [second, NIScrollContainerCandidate(key: first.key, geometry: moving)]
             ).matches,
             ["main": first.key]
         )
-
-        let restored = NIScrollContainerMatching.match(
-            descriptors: ["main": descriptor],
-            candidates: [first, second],
-            tolerance: 1
-        )
-        XCTAssertEqual(restored.matches, ["main": second.key])
+        XCTAssertEqual(match(["main": descriptor], [first, second]).matches, ["main": second.key])
     }
 
     func testAnOptionalClipWithoutAScrollViewDoesNotBlockTheScrollerInside() {
@@ -417,42 +181,46 @@ final class NIScrollContainerMatchingTests: XCTestCase {
         )
         let descriptors = [
             "view": NIScrollContainerDescriptor(geometry: view),
-            "page": NIScrollContainerDescriptor(
-                geometry: page,
-                scrollPath: ["view"]
-            ),
+            "page": NIScrollContainerDescriptor(geometry: page, scrollPath: ["view"]),
         ]
         let candidates = [NIScrollContainerCandidate(key: 0, geometry: page)]
-
         XCTAssertEqual(
-            NIScrollContainerMatching.match(
-                descriptors: descriptors,
-                candidates: candidates,
-                tolerance: 1.5,
-                optional: ["view"]
-            ),
+            match(descriptors, candidates, tolerance: 1.5, optional: ["view"]),
             NIScrollContainerMatchResult(matches: ["page": 0], failures: [:])
         )
 
-        let strict = NIScrollContainerMatching.match(
-            descriptors: descriptors,
-            candidates: candidates,
-            tolerance: 1.5
-        )
+        let strict = match(descriptors, candidates, tolerance: 1.5)
         XCTAssertEqual(strict.failures["view"], .missing)
         XCTAssertEqual(strict.failures["page"], .missing)
     }
 
     func testAnOptionalContainerWithLookalikesBindsTheTopmost() {
-        let result = NIScrollContainerMatching.match(
-            descriptors: ["main": NIScrollContainerDescriptor(geometry: main)],
-            candidates: [
-                NIScrollContainerCandidate(key: 1, geometry: main),
-                NIScrollContainerCandidate(key: 2, geometry: main),
-            ],
-            tolerance: 1,
+        let result = match(
+            ["main": NIScrollContainerDescriptor(geometry: main)],
+            [NIScrollContainerCandidate(key: 1, geometry: main), NIScrollContainerCandidate(key: 2, geometry: main)],
             optional: ["main"]
         )
         XCTAssertEqual(result.matches, ["main": 2])
+    }
+}
+
+extension NIScrollContainerGeometry {
+    fileprivate func with(
+        contentWidth: Double? = nil,
+        contentHeight: Double? = nil,
+        offsetX: Double? = nil,
+        offsetY: Double? = nil
+    )
+        -> NIScrollContainerGeometry {
+        NIScrollContainerGeometry(
+            x: x,
+            y: y,
+            width: width,
+            height: height,
+            contentWidth: contentWidth ?? self.contentWidth,
+            contentHeight: contentHeight ?? self.contentHeight,
+            offsetX: offsetX ?? self.offsetX,
+            offsetY: offsetY ?? self.offsetY
+        )
     }
 }

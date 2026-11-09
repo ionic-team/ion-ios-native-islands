@@ -2,8 +2,23 @@
     import UIKit
     import WebKit
 
+    /// The scroll view a scroll container follows, and how far its native offset ran ahead of the
+    /// page's when it was bound.
     private struct InnerScrollBinding {
-        var offsetBias: CGPoint
+        let view: UIScrollView
+        let offsetBias: CGPoint
+        let observation: NSKeyValueObservation
+    }
+
+    /// Why an island cannot follow scroll container `container`: it has no native scroll view, or
+    /// more than one could be it.
+    struct NIInnerScrollFailure: Equatable {
+        let container: String
+        let kind: NIScrollContainerMatchFailure
+
+        var reason: String {
+            "inner_scroll_unavailable:\(container):\(kind.rawValue)"
+        }
     }
 
     final class NativeIslandsScrollCoordinator {
@@ -13,17 +28,11 @@
         private var componentPaths: [String: [String]] = [:]
         private var regionPaths: [String: [[String]]] = [:]
         private var bindings: [String: InnerScrollBinding] = [:]
-        private var views: [String: UIScrollView] = [:]
-        private var observations: [String: NSKeyValueObservation] = [:]
 
         var onChange: ((String) -> Void)?
 
         var componentIDs: [String] {
             Array(componentPaths.keys)
-        }
-
-        func path(componentID: String) -> [String] {
-            componentPaths[componentID] ?? []
         }
 
         func removeComponent(id: String) {
@@ -32,9 +41,11 @@
         }
 
         func reset() {
-            observations.values.forEach { $0.invalidate() }
-            observations.removeAll()
-            views.removeAll()
+            bindings.values.forEach { $0.observation.invalidate() }
+            clear()
+        }
+
+        private func clear() {
             bindings.removeAll()
             componentPaths.removeAll()
             regionPaths.removeAll()
@@ -50,46 +61,54 @@
             cutouts: [String: [IslandRegion]],
             webView: WKWebView?
         )
-            -> [String: String] {
-            let previousViews = views
-            let previousBindings = bindings
-            reset()
+            -> [String: NIInnerScrollFailure] {
+            let previous = bindings
+            clear()
+            // A scroll view still bound keeps its observation; the others stop.
+            defer {
+                let kept = Set(bindings.values.map { ObjectIdentifier($0.observation) })
+                for binding in previous.values where !kept.contains(ObjectIdentifier(binding.observation)) {
+                    binding.observation.invalidate()
+                }
+            }
             self.webView = webView
             containers = Dictionary(uniqueKeysWithValues: scrollContainers.map { ($0.id, $0) })
             paintOrder = Dictionary(uniqueKeysWithValues: scrollContainers.enumerated().map { ($1.id, $0) })
             componentPaths = Dictionary(uniqueKeysWithValues: components.map { ($0.id, $0.scrollPath) })
-            let activeIDs = Set(
-                components
-                    .filter { $0.active && $0.rect != nil }
-                    .map(\.id)
-            )
-            for id in activeIDs {
-                regionPaths[id] =
-                    (exclusions[id] ?? []).map(\.scrollPath) +
-                    (cutouts[id] ?? []).map(\.scrollPath)
+            let shown = components.filter { $0.active && $0.rect != nil }
+            for component in shown {
+                regionPaths[component.id] =
+                    (exclusions[component.id] ?? []).map(\.scrollPath) +
+                    (cutouts[component.id] ?? []).map(\.scrollPath) +
+                    component.clips.map(\.scrollPath)
             }
 
             let referencedIDs = Set(
-                components.flatMap {
-                    $0.active && $0.rect != nil ? $0.scrollPath : []
-                } +
-                    regionPaths.values.flatMap { $0 }.flatMap { $0 }
+                shown.flatMap(\.scrollPath) + regionPaths.values.flatMap { $0 }.flatMap { $0 }
             )
             guard !referencedIDs.isEmpty else { return [:] }
             guard let webView else {
                 return failures(
-                    components: components,
-                    matches: Dictionary(
-                        uniqueKeysWithValues: referencedIDs.map {
-                            ($0, .missing)
-                        }
-                    )
+                    shown: shown,
+                    unmatched: Dictionary(uniqueKeysWithValues: referencedIDs.map { ($0, .missing) })
                 )
             }
+            return failures(shown: shown, unmatched: bindScrollViews(for: referencedIDs, in: webView, keeping: previous))
+        }
 
+        /// Binds each scroller in `ids` to the scroll view WebKit made for it, and returns why the rest
+        /// have none. `previous` holds the bindings of the last layout.
+        private func bindScrollViews(
+            for ids: Set<String>,
+            in webView: WKWebView,
+            keeping previous: [String: InnerScrollBinding]
+        )
+            -> [String: NIScrollContainerMatchFailure] {
             let candidates = nestedScrollViews(in: webView)
-            let expected = expectedGeometries(ids: referencedIDs, webView: webView)
+            let expected = expectedGeometries(ids: ids, webView: webView)
             let found = scrollCandidates(candidates, webView: webView)
+            // Points a scroll view's geometry may differ from the page's and still match, to absorb
+            // rounding between CSS pixels and native points.
             let tolerance = 1.5
             let result = NIScrollContainerMatching.match(
                 descriptors: expected,
@@ -101,82 +120,50 @@
                         .map(\.id)
                 )
             )
-            bind(
-                result.matches,
-                candidates: candidates,
-                expected: expected,
-                found: found,
-                tolerance: tolerance,
-                zoom: webView.scrollView.zoomScale
-            )
+            let zoom = webView.scrollView.zoomScale
+            for (id, key) in result.matches {
+                guard let descriptor = containers[id], zoom > 0 else { continue }
+                let scrollView = candidates[key]
+                let moving = scrollView.isDragging || scrollView.isDecelerating || scrollView.isTracking
+                let settled = !moving && (expected[id].map {
+                    NIScrollContainerMatching.offsetsMatch($0.geometry, found[key].geometry, tolerance: tolerance)
+                } ?? true)
+                // The bias is measured only while the scroller is still at the offset the page sent;
+                // otherwise the same scroll view keeps the bias it had.
+                let bias = settled
+                    ? CGPoint(
+                        x: scrollView.contentOffset.x / zoom - descriptor.offsetX,
+                        y: scrollView.contentOffset.y / zoom - descriptor.offsetY
+                    )
+                    : previous[id].flatMap { $0.view === scrollView ? $0.offsetBias : nil } ?? .zero
+                bind(id, to: scrollView, offsetBias: bias, keeping: previous[id])
+            }
             var unmatched = result.failures
-            let bound = Set(views.values.map(ObjectIdentifier.init))
+            let bound = Set(bindings.values.map { ObjectIdentifier($0.view) })
             for id in expected.keys where result.matches[id] == nil {
+                // A scroller sliding with its page can match nothing; it keeps the scroll view it had
+                // while that is still in the WebView and no other scroller took it.
                 guard
-                    let scrollView = previousViews[id],
-                    let binding = previousBindings[id],
-                    scrollView.isDescendant(of: webView),
-                    !bound.contains(ObjectIdentifier(scrollView))
+                    let kept = previous[id],
+                    kept.view.isDescendant(of: webView),
+                    !bound.contains(ObjectIdentifier(kept.view))
                 else {
                     continue
                 }
-                views[id] = scrollView
-                bindings[id] = binding
-                observe(id, scrollView)
+                bind(id, to: kept.view, offsetBias: kept.offsetBias, keeping: kept)
                 unmatched[id] = nil
             }
-            return failures(
-                components: components,
-                matches: unmatched
-            )
+            return unmatched
         }
 
-        private func bind(
-            _ matches: [String: Int],
-            candidates: [UIScrollView],
-            expected: [String: NIScrollContainerDescriptor],
-            found: [NIScrollContainerCandidate],
-            tolerance: Double,
-            zoom: CGFloat
-        ) {
-            for (id, key) in matches {
-                guard
-                    candidates.indices.contains(key),
-                    let descriptor = containers[id],
-                    zoom > 0
-                else {
-                    continue
+        /// Follows `scrollView` for scroller `id`, with the observation `previous` had when it bound the
+        /// same scroll view.
+        private func bind(_ id: String, to scrollView: UIScrollView, offsetBias: CGPoint, keeping previous: InnerScrollBinding?) {
+            let observation = previous.flatMap { $0.view === scrollView ? $0.observation : nil } ??
+                scrollView.observe(\.contentOffset, options: [.new]) { [weak self] _, _ in
+                    self?.onChange?(id)
                 }
-                let scrollView = candidates[key]
-                views[id] = scrollView
-                let settled = expected[id].map {
-                    NIScrollContainerMatching.offsetsMatch(
-                        $0.geometry,
-                        found[key].geometry,
-                        tolerance: tolerance
-                    )
-                } ?? true
-                bindings[id] = InnerScrollBinding(
-                    offsetBias: settled
-                        ? CGPoint(
-                            x: scrollView.contentOffset.x / zoom -
-                                descriptor.offsetX,
-                            y: scrollView.contentOffset.y / zoom -
-                                descriptor.offsetY
-                        )
-                        : .zero
-                )
-                observe(id, scrollView)
-            }
-        }
-
-        private func observe(_ id: String, _ scrollView: UIScrollView) {
-            observations[id] = scrollView.observe(
-                \.contentOffset,
-                options: [.new]
-            ) { [weak self] _, _ in
-                self?.onChange?(id)
-            }
+            bindings[id] = InnerScrollBinding(view: scrollView, offsetBias: offsetBias, observation: observation)
         }
 
         func componentIDs(affectedBy containerID: String) -> [String] {
@@ -189,63 +176,49 @@
             }
         }
 
-        func offset(componentID: String) -> CGPoint {
-            offset(path: path(componentID: componentID))
-        }
-
         func scrollports(componentID: String) -> [IslandRegion] {
-            path(componentID: componentID).compactMap { id in
-                containers[id].map {
-                    IslandRegion(
-                        rect: $0.rect,
-                        scrollPath: $0.scrollPath,
-                        coordinateSpace: $0.coordinateSpace,
-                        sticky: nil,
-                        motionPath: $0.motionPath
-                    )
-                }
-            }
+            (componentPaths[componentID] ?? []).compactMap { containers[$0]?.scrollport }
         }
 
+        /// How far the scrollers on `path` move what they hold on the page, each offset drawn as
+        /// the transforms at and above its scroller draw it.
         func offset(path: [String]) -> CGPoint {
             path.reduce(into: .zero) { result, id in
-                let value = offset(containerID: id)
+                let value = drawnOffset(containerID: id)
                 result.x += value.x
                 result.y += value.y
             }
         }
 
+        private func drawnOffset(containerID: String) -> CGPoint {
+            offset(containerID: containerID).applying(containers[containerID]?.linear ?? .identity)
+        }
+
         private func offset(containerID: String) -> CGPoint {
-            guard
-                let descriptor = containers[containerID],
-                let binding = bindings[containerID],
-                let scrollView = views[containerID]
-            else {
-                guard let descriptor = containers[containerID] else {
-                    return .zero
-                }
-                return CGPoint(
-                    x: descriptor.offsetX,
-                    y: descriptor.offsetY
-                )
-            }
+            guard let descriptor = containers[containerID] else { return .zero }
             let zoom = webView?.scrollView.zoomScale ?? 1
-            guard zoom > 0 else {
-                return CGPoint(
-                    x: descriptor.offsetX,
-                    y: descriptor.offsetY
-                )
+            guard let binding = bindings[containerID], zoom > 0 else {
+                return CGPoint(x: descriptor.offsetX, y: descriptor.offsetY)
             }
+            let scrollView = binding.view
             return NIContainerGeometry.calibratedScrollOffset(
                 nativeOffset: scrollView.contentOffset,
                 zoom: zoom,
-                bias: binding.offsetBias
+                bias: binding.offsetBias,
+                maxDomOffset: CGPoint(
+                    x: max(0, descriptor.contentWidth - descriptor.rect.width),
+                    y: max(0, descriptor.contentHeight - descriptor.rect.height)
+                ),
+                maxNativeOffset: CGPoint(
+                    x: max(0, (scrollView.contentSize.width - scrollView.bounds.width) / zoom),
+                    y: max(0, (scrollView.contentSize.height - scrollView.bounds.height) / zoom)
+                )
             )
         }
 
         func visibleContent(containerID: String) -> CGRect? {
             guard let descriptor = containers[containerID] else { return nil }
-            let offset = offset(containerID: containerID)
+            let offset = drawnOffset(containerID: containerID)
             return CGRect(
                 x: descriptor.rect.x + offset.x,
                 y: descriptor.rect.y + offset.y,
@@ -257,8 +230,9 @@
         private func descriptorOffset(path: [String]) -> CGPoint {
             path.reduce(into: .zero) { result, id in
                 guard let descriptor = containers[id] else { return }
-                result.x += descriptor.offsetX
-                result.y += descriptor.offsetY
+                let offset = CGPoint(x: descriptor.offsetX, y: descriptor.offsetY).applying(descriptor.linear)
+                result.x += offset.x
+                result.y += offset.y
             }
         }
 
@@ -271,22 +245,19 @@
             let rootOffset = webView.scrollView.contentOffset
             return ids.reduce(into: [:]) { values, id in
                 guard let descriptor = containers[id] else { return }
-                let ancestorOffset = descriptorOffset(
-                    path: descriptor.scrollPath
+                let frame = NIContainerGeometry.screenRect(
+                    descriptor.rect,
+                    coordinateSpace: descriptor.coordinateSpace,
+                    nestedOffset: descriptorOffset(path: descriptor.scrollPath),
+                    zoom: zoom,
+                    rootOffset: rootOffset
                 )
-                let documentOffset = descriptor.coordinateSpace == .document ? rootOffset : .zero
                 values[id] = NIScrollContainerDescriptor(
                     geometry: NIScrollContainerGeometry(
-                        x: Double(
-                            (descriptor.rect.x - ancestorOffset.x) * zoom -
-                                documentOffset.x
-                        ),
-                        y: Double(
-                            (descriptor.rect.y - ancestorOffset.y) * zoom -
-                                documentOffset.y
-                        ),
-                        width: Double(descriptor.rect.width * zoom),
-                        height: Double(descriptor.rect.height * zoom),
+                        x: Double(frame.x),
+                        y: Double(frame.y),
+                        width: Double(frame.width),
+                        height: Double(frame.height),
                         contentWidth: Double(descriptor.contentWidth * zoom),
                         contentHeight: Double(descriptor.contentHeight * zoom),
                         offsetX: Double(descriptor.offsetX * zoom),
@@ -337,38 +308,29 @@
         }
 
         private func failures(
-            components: [IslandComponent],
-            matches: [String: NIScrollContainerMatchFailure]
+            shown: [IslandComponent],
+            unmatched: [String: NIScrollContainerMatchFailure]
         )
-            -> [String: String] {
-            components.reduce(into: [:]) { output, component in
-                guard component.active, component.rect != nil else { return }
+            -> [String: NIInnerScrollFailure] {
+            shown.reduce(into: [:]) { output, component in
                 let paths = [component.scrollPath] +
                     (regionPaths[component.id] ?? [])
                 guard let id = paths
                     .flatMap({ $0 })
                     .first(where: {
-                        matches[$0] != nil || containers[$0] == nil
+                        unmatched[$0] != nil || containers[$0] == nil
                     })
                 else {
                     return
                 }
-                let detail = switch matches[id] ?? .missing {
-                case .missing:
-                    "missing"
-                case .ambiguous:
-                    "ambiguous"
-                case .sharedCandidate:
-                    "shared"
-                }
-                output[component.id] =
-                    "inner_scroll_unavailable:\(id):\(detail)"
+                output[component.id] = NIInnerScrollFailure(container: id, kind: unmatched[id] ?? .missing)
             }
         }
 
         private func nestedScrollViews(in webView: WKWebView) -> [UIScrollView] {
             var scrollViews: [UIScrollView] = []
             func visit(_ view: UIView) {
+                guard !(view is NativeIslandsPlane) else { return }
                 if let scrollView = view as? UIScrollView,
                    scrollView !== webView.scrollView {
                     scrollViews.append(scrollView)

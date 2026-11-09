@@ -46,3 +46,13 @@ struct NICanvasColor: Equatable {
         blue = Double(rgb & 0xFF) / 255
     }
 }
+
+#if canImport(UIKit)
+    import UIKit
+
+    extension NICanvasColor {
+        var uiColor: UIColor {
+            UIColor(red: red, green: green, blue: blue, alpha: 1)
+        }
+    }
+#endif

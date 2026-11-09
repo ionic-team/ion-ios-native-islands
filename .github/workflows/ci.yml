@@ -31,6 +31,12 @@ jobs:
           build
           CODE_SIGNING_ALLOWED=NO
 
+      # swift test runs on macOS, which compiles out the UIKit tests (placement, motion, touch).
+      - name: Run UIKit tests on an iOS Simulator
+        run: |
+          device=$(xcrun simctl list devices available -j | python3 -c 'import json, sys; devices = json.load(sys.stdin)["devices"]; print(next(d["udid"] for runtime, list_ in devices.items() if "iOS" in runtime for d in list_ if d["name"].startswith("iPhone")))')
+          xcodebuild -scheme IONNativeIslandsLib -destination "id=$device" test CODE_SIGNING_ALLOWED=NO
+
       - name: Lint Swift
         run: swiftlint --strict
 

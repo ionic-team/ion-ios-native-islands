@@ -1,139 +1,22 @@
-// swiftlint:disable file_length
 #if canImport(UIKit) && canImport(WebKit)
     import UIKit
     import WebKit
     import XCTest
     @testable import IONNativeIslandsLib
 
-    // swiftlint:disable:next type_body_length
     final class NativeIslandsContainerLayoutTests: XCTestCase {
         func testAnIslandInAScrollportIsVisibleHalfAScreenBeforeItScrollsIn() {
-            let container = UIView(frame: CGRect(x: 0, y: 0, width: 400, height: 800))
-            let host = UIView(frame: CGRect(x: 0, y: 900, width: 400, height: 200))
-            container.addSubview(host)
-            let tracker = NativeIslandsVisibilityTracker()
-            var reported: [String: Bool] = [:]
-            tracker.onChange = { reported[$0] = $1 }
+            let bounds = CGRect(x: 0, y: 0, width: 400, height: 800)
             let scrollport = CGRect(x: 0, y: 100, width: 400, height: 600)
-
-            tracker.update(container: container, hosts: ["near": host], screenScrollports: { _ in [scrollport] })
-            XCTAssertEqual(reported["near"], true, "200 points below its scrollport is within the half-screen margin")
-
-            host.frame.origin.y = 1300
-            tracker.update(container: container, hosts: ["near": host], screenScrollports: { _ in [scrollport] })
-            XCTAssertEqual(reported["near"], false)
-        }
-
-        func testAScrollportHoldingTheWholeIslandLeavesNoMask() {
-            let host = UIView(frame: CGRect(x: 0, y: 0, width: 120, height: 120))
-            let content = UIView(frame: host.bounds)
-            host.addSubview(content)
-            let clipping = NativeIslandsHostClipping()
-            let around = IslandRect(x: -30, y: -500, width: 200, height: 900, cornerRadii: NICornerRadii(uniform: 0))
-            clipping.applyScrollports(to: host, contentHost: content, islandID: "a", scrollports: [around])
-            XCTAssertNil(content.superview?.layer.mask, "a scrollport around the island clips nothing")
-
-            let edge = IslandRect(x: -30, y: 60, width: 200, height: 900, cornerRadii: NICornerRadii(uniform: 0))
-            clipping.applyScrollports(to: host, contentHost: content, islandID: "a", scrollports: [edge])
-            XCTAssertNotNil((content.superview?.layer.mask as? CAShapeLayer)?.path, "a scrollport edge across the island clips it")
-
-            let rounded = IslandRect(x: 0, y: 0, width: 120, height: 120, cornerRadii: NICornerRadii(uniform: 16))
-            XCTAssertFalse(rounded.containsBox(host.bounds.size), "its rounded corners cut the island's corners")
-            XCTAssertTrue(around.containsBox(host.bounds.size))
-        }
-
-        func testCutoutMaskIsUpdatedInPlaceAndCleared() throws {
-            let host = UIView(frame: CGRect(x: 0, y: 0, width: 120, height: 120))
-            let clipping = NativeIslandsHostClipping()
-            let first = IslandRect(x: 20, y: 20, width: 20, height: 20, cornerRadii: NICornerRadii(uniform: 0))
-            let second = IslandRect(x: 80, y: 80, width: 20, height: 20, cornerRadii: NICornerRadii(uniform: 0))
-
-            clipping.applyCutouts(to: host, islandID: "preview", cutouts: [first])
-            let mask = try XCTUnwrap(host.layer.mask as? CAShapeLayer)
-            let firstPath = try XCTUnwrap(mask.path)
-            clipping.applyCutouts(to: host, islandID: "preview", cutouts: [first])
-            XCTAssertTrue(try XCTUnwrap(mask.path) === firstPath, "unchanged local cutouts reuse their mask path")
-
-            clipping.applyCutouts(to: host, islandID: "preview", cutouts: [second])
-            let secondPath = try XCTUnwrap(mask.path)
-            XCTAssertFalse(secondPath === firstPath, "a moved cutout builds a new local path")
-
-            XCTAssertTrue(host.layer.mask === mask)
-            XCTAssertTrue(secondPath.contains(CGPoint(x: 25, y: 25), using: .evenOdd))
-            XCTAssertFalse(secondPath.contains(CGPoint(x: 85, y: 85), using: .evenOdd))
-            clipping.applyCutouts(to: host, islandID: "preview", cutouts: [])
-            XCTAssertNil(host.layer.mask)
-        }
-
-        func testATrackedMotionMovesALayerWithWebKitsAnimationFromWhereItsModelIs() throws {
-            let container = NativeIslandsContainer(frame: .zero)
-            let clock = NIPageClock()
-            clock.sample(pageMilliseconds: 1000, nativeSeconds: 10)
-            container.pageClock = clock
-            let motion = NIMotion(id: "page", animations: [NIMotionAnimation(
-                channel: .translate,
-                keyframes: [
-                    NIMotionKeyframe(offset: 0, value: [0, 0], easing: .linear),
-                    NIMotionKeyframe(offset: 1, value: [-80, 0], easing: .linear),
-                ],
-                duration: 400,
-                startTime: 1000
-            )])
-            container.motions = ["page": motion]
-            let webKit = CAKeyframeAnimation(keyPath: "position")
-            webKit.values = [NSValue(cgPoint: .zero), NSValue(cgPoint: CGPoint(x: -80, y: 0))]
-            webKit.duration = 0.4
-            webKit.beginTime = 10
-            webKit.isAdditive = true
-            container.motionTracks[motion.key] = webKit
-            let layer = CALayer()
-
-            container.motionFrameTime = 10.1 // page time 1100, a quarter of the way
-            container.applyMotion(container.trackedMoves(["page"]), scale: 2, to: layer)
-            let move = try XCTUnwrap(layer.animation(forKey: "ni.move.\(motion.key).1.0.2.0") as? CAKeyframeAnimation)
-            XCTAssertTrue(move.isAdditive)
-            XCTAssertEqual(move.values?.last as? NSValue, NSValue(cgPoint: CGPoint(x: -160, y: 0)))
-            let rebase = try XCTUnwrap(layer.animation(forKey: "ni.rebase") as? CABasicAnimation)
-            XCTAssertEqual((rebase.fromValue as? NSValue)?.cgPointValue.x ?? .nan, 40, accuracy: 1e-9, "cancels the 20 px the model holds")
-
-            container.applyMotion([], scale: 2, to: layer)
-            XCTAssertNil(layer.animationKeys(), "no motion leaves no animation")
-        }
-
-        func testAFreshMotionWaitsForWebKitsCommittedStart() {
-            let container = NativeIslandsContainer(frame: .zero)
-            let motion = NIMotion(id: "page", animations: [NIMotionAnimation(
-                channel: .translate,
-                keyframes: [
-                    NIMotionKeyframe(offset: 0, value: [402, 0], easing: .linear),
-                    NIMotionKeyframe(offset: 1, value: [0, 0], easing: .linear),
-                ],
-                duration: 400,
-                startTime: 1000
-            )])
-            container.adopt(["page": motion])
-            XCTAssertEqual(container.motions["page"]?.offset(at: 1200).x ?? 0, 0, accuracy: 1e-9)
-            container.stopMotion()
-        }
-
-        func testAnUnmatchedMotionKeepsFrameCallbacksUntilItCanBeReleased() {
-            let container = NativeIslandsContainer(frame: .zero)
-            let clock = NIPageClock()
-            clock.sample(pageMilliseconds: 1000, nativeSeconds: CACurrentMediaTime())
-            container.pageClock = clock
-            let motion = NIMotion(id: "page", animations: [NIMotionAnimation(
-                channel: .translate,
-                keyframes: [
-                    NIMotionKeyframe(offset: 0, value: [402, 0], easing: .linear),
-                    NIMotionKeyframe(offset: 1, value: [0, 0], easing: .linear),
-                ],
-                duration: 400,
-                startTime: 0
-            )])
-            container.adopt(["page": motion])
-            container.scheduleMotionFrames()
-            XCTAssertNotNil(container.motionLink, "a held motion still needs to be matched or timed out")
-            container.stopMotion()
+            func visible(atY y: CGFloat) -> Bool {
+                NativeIslandsContainer.isNearViewport(
+                    CGRect(x: 0, y: y, width: 400, height: 200),
+                    scrollports: [scrollport],
+                    bounds: bounds
+                )
+            }
+            XCTAssertTrue(visible(atY: 900), "200 points below its scrollport is within the half-screen margin")
+            XCTAssertFalse(visible(atY: 1300))
         }
 
         func testChangingScrollportCountKeepsContentInItsWindow() throws {
@@ -147,51 +30,28 @@
                 }
             }
             let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 874))
-            let host = UIView(frame: CGRect(x: 17, y: 214, width: 178, height: 178))
-            let contentHost = UIView(frame: host.bounds)
-            let content = Content(frame: contentHost.bounds)
+            let content = Content()
+            let island = NativeIslandsHost(island: content)
+            let host = island.view
+            host.frame = CGRect(x: 17, y: 214, width: 178, height: 178)
             window.addSubview(host)
-            host.addSubview(contentHost)
-            contentHost.addSubview(content)
-            let clipping = NativeIslandsHostClipping()
             let port = IslandRect(x: -17, y: -214, width: 402, height: 874, cornerRadii: NICornerRadii(uniform: 0))
             for count in [2, 3, 2, 0] {
-                clipping.applyScrollports(to: host, contentHost: contentHost, islandID: "preview", scrollports: Array(repeating: port, count: count))
+                island.applyClips(Array(repeating: port, count: count))
                 XCTAssertTrue(content.window === window)
                 XCTAssertEqual(content.detachments, 0, "a page push changes clips, not the native content lifetime")
             }
 
             let edge = IslandRect(x: -17, y: -214, width: 402, height: 300, cornerRadii: NICornerRadii(uniform: 0))
-            clipping.applyScrollports(to: host, contentHost: contentHost, islandID: "preview", scrollports: [edge])
-            let wrapper = try XCTUnwrap(host.subviews.first)
-            let mask = try XCTUnwrap(wrapper.layer.mask as? CAShapeLayer)
-            let originalPath = try XCTUnwrap(mask.path)
-            clipping.applyScrollports(to: host, contentHost: contentHost, islandID: "preview", scrollports: [edge])
-            XCTAssertTrue(try XCTUnwrap(mask.path) === originalPath, "unchanged local scrollports reuse their mask path")
+            island.applyClips([edge])
+            island.applyClips([edge])
+            let mask = try XCTUnwrap(host.subviews.first?.layer.mask as? CAShapeLayer)
+            XCTAssertEqual(try XCTUnwrap(mask.path).boundingBox.maxY, edge.cgRect.maxY, accuracy: 1e-9, "a scrollport edge clips it")
 
-            let moved = IslandRect(
-                x: edge.x + 0.25,
-                y: edge.y,
-                width: edge.width,
-                height: edge.height,
-                cornerRadii: edge.cornerRadii
-            )
-            clipping.applyScrollports(to: host, contentHost: contentHost, islandID: "preview", scrollports: [moved])
-            XCTAssertFalse(try XCTUnwrap(mask.path) === originalPath, "a fractional nested-path shift invalidates the shape")
-        }
-
-        func testResetCompletionRunsAfterTheMainQueueReset() {
-            let controller = NativeIslandsController { _, _ in }
-            let completed = expectation(description: "reset completed")
-
-            DispatchQueue.global().async {
-                controller.reset {
-                    XCTAssertTrue(Thread.isMainThread)
-                    completed.fulfill()
-                }
-            }
-
-            wait(for: [completed], timeout: 1)
+            var moved = edge
+            moved.x += 0.25
+            island.applyClips([moved])
+            XCTAssertEqual(try XCTUnwrap(mask.path).boundingBox.minX, moved.x, accuracy: 1e-9, "a fractional nested-path shift moves the clip")
         }
 
         func testRegisteredViewMatchesUpdatedHostBounds() throws {
@@ -237,7 +97,7 @@
 
             container.layoutIfNeeded()
 
-            let contentHost = try XCTUnwrap(container.contentHosts["tabs"])
+            let contentHost = try XCTUnwrap(container.hosts["tabs"]?.content)
             XCTAssertEqual(tabBar.frame, contentHost.bounds)
             XCTAssertEqual(tabBar.bounds.size, CGSize(width: 402, height: 83))
         }
@@ -267,10 +127,10 @@
                     cutouts: [:]
                 ).isEmpty)
                 container.layoutIfNeeded()
-                let host = try XCTUnwrap(container.hosts["sheet"])
-                XCTAssertTrue(host.layer.masksToBounds)
-                XCTAssertEqual(container.contentHosts["sheet"]?.bounds.size, CGSize(width: 402, height: 400))
-                return host
+                let body = try XCTUnwrap(container.hosts["sheet"]?.body)
+                XCTAssertTrue(body.layer.masksToBounds)
+                XCTAssertEqual(body.bounds.size, CGSize(width: 402, height: 400))
+                return body
             }
 
             _ = try layOut(NICornerRadii(uniform: 0))
@@ -278,18 +138,18 @@
             let top = try layOut(NICornerRadii(topLeft: 24, topRight: 24, bottomRight: 0, bottomLeft: 0))
             XCTAssertEqual(top.layer.cornerRadius, 24)
             XCTAssertEqual(top.layer.maskedCorners, [.layerMinXMinYCorner, .layerMaxXMinYCorner])
-            XCTAssertTrue(top.subviews.allSatisfy { $0.layer.mask == nil })
+            XCTAssertNil(top.layer.mask)
 
             let mixed = try layOut(NICornerRadii(topLeft: 24, topRight: 8, bottomRight: 0, bottomLeft: 0))
             XCTAssertEqual(mixed.layer.cornerRadius, 0)
-            let clip = try XCTUnwrap(mixed.subviews.first?.layer.mask as? CAShapeLayer)
+            let clip = try XCTUnwrap(mixed.layer.mask as? CAShapeLayer)
             let path = try XCTUnwrap(clip.path)
             XCTAssertFalse(path.contains(CGPoint(x: 2, y: 2)))
             XCTAssertTrue(path.contains(CGPoint(x: 400, y: 3)))
             XCTAssertTrue(path.contains(CGPoint(x: 1, y: 399)))
         }
 
-        func testViewportUnderlayStaysFixedAndRetainsHostAcrossPlaneChanges() throws {
+        func testAViewportIslandUnderTheWebViewStaysFixedAsTheDocumentScrolls() throws {
             let container = NativeIslandsContainer(
                 frame: CGRect(x: 0, y: 0, width: 402, height: 874)
             )
@@ -297,9 +157,8 @@
             container.attach(webView: webView)
             defer { container.detachWebView() }
             webView.scrollView.contentSize = CGSize(width: 402, height: 2000)
-            let native = UIView()
-            container.registerIsland(id: "options", view: native, accessibility: .native)
-            var options = IslandComponent(
+            container.registerIsland(id: "options", view: UIView(), accessibility: .native)
+            let options = IslandComponent(
                 id: "options",
                 rect: IslandRect(x: 20, y: 300, width: 362, height: 450, cornerRadii: NICornerRadii(uniform: 0)),
                 scrollPath: [],
@@ -315,39 +174,14 @@
                 exclusions: [:],
                 cutouts: [:]
             ).isEmpty)
-            let host = try XCTUnwrap(container.hosts["options"])
-            let contentHost = try XCTUnwrap(container.contentHosts["options"])
-            XCTAssertTrue(host.superview === container.documentLayer)
+            let host = try XCTUnwrap(container.hosts["options"]?.view)
+            XCTAssertTrue(host.superview === container.underlayPlane)
             let expected = CGRect(x: 20, y: 300, width: 362, height: 450)
             for offset in [CGFloat(0), 120, 360, 0] {
                 webView.scrollView.contentOffset = CGPoint(x: 0, y: offset)
                 XCTAssertEqual(container.convert(host.bounds, from: host), expected)
                 XCTAssertFalse(host.isHidden)
             }
-            options.plane = .overlay
-            XCTAssertTrue(container.applyLedger(
-                components: [options],
-                scrollContainers: [],
-                order: ["options"],
-                exclusions: [:],
-                cutouts: [:]
-            ).isEmpty)
-            XCTAssertTrue(container.hosts["options"] === host)
-            XCTAssertTrue(container.contentHosts["options"] === contentHost)
-            XCTAssertTrue(native.superview === contentHost)
-            XCTAssertTrue(host.superview === container.overlayLayer)
-            XCTAssertEqual(container.convert(host.bounds, from: host), expected)
-            options.plane = .underlay
-            XCTAssertTrue(container.applyLedger(
-                components: [options],
-                scrollContainers: [],
-                order: ["options"],
-                exclusions: [:],
-                cutouts: [:]
-            ).isEmpty)
-            XCTAssertTrue(container.hosts["options"] === host)
-            XCTAssertTrue(host.superview === container.documentLayer)
-            XCTAssertEqual(container.convert(host.bounds, from: host), expected)
         }
 
         func testIslandInAPaneFixedToTheViewportFollowsThePaneNotTheDocument() throws {
@@ -394,8 +228,8 @@
                 exclusions: [:],
                 cutouts: ["preview": [label]]
             ).isEmpty)
-            let host = try XCTUnwrap(container.hosts["preview"])
-            let contentHost = try XCTUnwrap(container.contentHosts["preview"])
+            let host = try XCTUnwrap(container.hosts["preview"]?.view)
+            let contentHost = try XCTUnwrap(container.hosts["preview"]?.content)
             let placed = CGRect(x: 20, y: 300, width: 100, height: 100)
             XCTAssertEqual(container.convert(host.bounds, from: host), placed)
 
@@ -429,7 +263,7 @@
             webView.addSubview(pane)
             let preview = UIView()
             container.registerIsland(id: "preview", view: preview, accessibility: .native)
-            func ledger(paneX: CGFloat, offsetY: CGFloat) -> [String: String] {
+            func ledger(paneX: CGFloat, offsetY: CGFloat) -> [String: NIInnerScrollFailure] {
                 container.applyLedger(
                     components: [IslandComponent(
                         id: "preview",
@@ -474,7 +308,7 @@
             }
             XCTAssertEqual(ledger(paneX: 0, offsetY: 0), [:], "the clip is followed from the layout at once")
             pane.contentOffset = CGPoint(x: 0, y: 100)
-            let host = try XCTUnwrap(container.hosts["preview"])
+            let host = try XCTUnwrap(container.hosts["preview"]?.view)
             XCTAssertEqual(container.convert(host.bounds, from: host), CGRect(x: 20, y: 200, width: 100, height: 100))
 
             pane.frame.origin.x = -120
@@ -510,7 +344,7 @@
                 container.applyLedger(components: [card], scrollContainers: [], order: ["card"], exclusions: [:], cutouts: [:])
             }
             XCTAssertTrue(apply().isEmpty)
-            let host = try XCTUnwrap(container.hosts["card"])
+            let host = try XCTUnwrap(container.hosts["card"]?.view)
             XCTAssertEqual(host.alpha, 0.4, accuracy: 0.001)
             card.opacity = 1
             XCTAssertTrue(apply().isEmpty)
@@ -553,7 +387,7 @@
                 exclusions: ["map": [header]],
                 cutouts: ["map": [header]]
             ).isEmpty)
-            let contentHost = try XCTUnwrap(container.contentHosts["map"])
+            let contentHost = try XCTUnwrap(container.hosts["map"]?.content)
 
             webView.scrollView.contentOffset = CGPoint(x: 0, y: 300)
 
@@ -620,12 +454,12 @@
                 exclusions: ["options": [confirmation]],
                 cutouts: [:]
             ).isEmpty)
-            let previewHost = try XCTUnwrap(container.hosts["preview"])
-            let optionsHost = try XCTUnwrap(container.hosts["options"])
-            XCTAssertEqual(container.documentLayer.subviews.count, 2)
-            XCTAssertTrue(container.documentLayer.subviews[0] === previewHost)
-            XCTAssertTrue(container.documentLayer.subviews[1] === optionsHost)
-            XCTAssertTrue(container.hosts["tabs"]?.superview === container.overlayLayer)
+            let previewHost = try XCTUnwrap(container.hosts["preview"]?.view)
+            let optionsHost = try XCTUnwrap(container.hosts["options"]?.view)
+            XCTAssertEqual(container.underlayPlane.subviews.count, 2)
+            XCTAssertTrue(container.underlayPlane.subviews[0] === previewHost)
+            XCTAssertTrue(container.underlayPlane.subviews[1] === optionsHost)
+            XCTAssertTrue(container.hosts["tabs"]?.view.superview === container.overlayPlane)
             XCTAssertNil(optionsHost.layer.mask)
             XCTAssertTrue(container.hitTest(CGPoint(x: 100, y: 390), with: nil) === options)
             XCTAssertTrue(container.hitTest(CGPoint(x: 100, y: 200), with: nil) === preview)

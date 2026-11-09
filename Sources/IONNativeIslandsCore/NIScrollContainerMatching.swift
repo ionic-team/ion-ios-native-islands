@@ -43,10 +43,10 @@ struct NIScrollContainerDescriptor: Equatable {
     }
 }
 
-enum NIScrollContainerMatchFailure: Equatable {
+enum NIScrollContainerMatchFailure: String {
     case missing
     case ambiguous
-    case sharedCandidate
+    case sharedCandidate = "shared"
 }
 
 struct NIScrollContainerMatchResult: Equatable {
@@ -156,11 +156,7 @@ enum NIScrollContainerMatching {
         let topologyMatches = geometricMatches.filter {
             $0.ancestorKeys.filter(matchedKeys.contains) == ancestorKeys
         }
-        return topologyMatches.count == 1
-            ? topologyMatches
-            : geometricMatches.count == 1
-            ? geometricMatches
-            : topologyMatches
+        return topologyMatches.count != 1 && geometricMatches.count == 1 ? geometricMatches : topologyMatches
     }
 
     private struct Claim {

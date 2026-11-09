@@ -27,8 +27,8 @@ struct NISticky: Equatable {
         if value["scroller"] != nil, !(value["scroller"] is String) { return nil }
         self.init(
             scroller: value["scroller"] as? String,
-            natural: CGRect(x: natural.x, y: natural.y, width: natural.width, height: natural.height),
-            bounds: CGRect(x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height),
+            natural: natural.cgRect,
+            bounds: bounds.cgRect,
             top: insets["top"],
             right: insets["right"],
             bottom: insets["bottom"],

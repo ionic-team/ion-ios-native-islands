@@ -13,6 +13,7 @@
         override func setUp() {
             super.setUp()
             parent.addSubview(webView)
+            controller.launchCacheEnabled = false
             controller.ensureContainer(webView: webView)
         }
 
@@ -26,8 +27,8 @@
 
         private func commit(_ fence: Int, to sentinel: CALayer) {
             sentinel.transform = CATransform3DMakeTranslation(
-                CGFloat(fence) / CGFloat(NativeIslandsController.fenceRange),
-                NativeIslandsController.fenceSentinelY,
+                CGFloat(fence) / CGFloat(NativeIslandsPaintFence.range),
+                NativeIslandsPaintFence.sentinelY,
                 0
             )
         }
@@ -44,12 +45,10 @@
         }
 
         private func command(_ name: String) {
-            controller.dispatchCommand(
+            controller.command(
                 island: "island-1",
-                requestedType: "fixture.fence",
-                method: "update",
-                params: [:],
-                instance: nil
+                type: "fixture.fence",
+                method: "update"
             ) { [weak self] _ in self?.calls.append(name) }
         }
 
@@ -73,23 +72,35 @@
             XCTAssertEqual(calls, ["unfenced", "retirement", "command", "next"])
         }
 
+        func testAFencedLayoutRunsWhileWebKitSetsTheSentinel() {
+            let sentinel = addSentinel(fence: 4)
+            applyLayout("retirement", fence: 5)
+            command("command")
+            XCTAssertEqual(calls, [])
+
+            commit(5, to: sentinel)
+            XCTAssertEqual(calls, ["retirement", "command"], "released inside the setter, in WebKit's transaction")
+        }
+
         func testAFenceAlreadyCommittedOrPassedDoesNotWait() {
             _ = addSentinel(fence: 2)
             applyLayout("retirement", fence: 1)
             XCTAssertEqual(calls, ["retirement"])
         }
 
-        func testWithoutASentinelAFencedLayoutAppliesAtOnce() {
+        func testWithoutASentinelAFencedLayoutWaitsOutTheBound() {
             applyLayout("retirement", fence: 3)
+            XCTAssertEqual(calls, [], "no sentinel is no sign the page painted")
+            spin(NativeIslandsPaintFence.maxWait * 1.5)
             XCTAssertEqual(calls, ["retirement"])
         }
 
         func testAFenceWebKitNeverCommitsIsReleasedAfterTheWait() {
             _ = addSentinel(fence: 0)
             applyLayout("retirement", fence: 1)
-            spin(NativeIslandsController.maxFenceWait / 2)
+            spin(NativeIslandsPaintFence.maxWait / 2)
             XCTAssertEqual(calls, [])
-            spin(NativeIslandsController.maxFenceWait)
+            spin(NativeIslandsPaintFence.maxWait)
             XCTAssertEqual(calls, ["retirement"])
         }
 
@@ -98,7 +109,7 @@
             applyLayout("retirement", fence: 1)
             controller.reset()
             commit(1, to: sentinel)
-            spin(NativeIslandsController.maxFenceWait * 1.5)
+            spin(NativeIslandsPaintFence.maxWait * 1.5)
             XCTAssertEqual(calls, [])
 
             applyLayout("after reset")
@@ -106,15 +117,17 @@
         }
 
         func testFencesCompareAcrossTheWrap() {
-            XCTAssertTrue(NativeIslandsController.fencePassed(committed: 1, fence: 1023))
-            XCTAssertTrue(NativeIslandsController.fencePassed(committed: 7, fence: 7))
-            XCTAssertFalse(NativeIslandsController.fencePassed(committed: 1023, fence: 1))
-            XCTAssertFalse(NativeIslandsController.fencePassed(committed: 6, fence: 7))
+            XCTAssertTrue(NativeIslandsPaintFence.passed(committed: 1, fence: 1023))
+            XCTAssertTrue(NativeIslandsPaintFence.passed(committed: 7, fence: 7))
+            XCTAssertFalse(NativeIslandsPaintFence.passed(committed: 1023, fence: 1))
+            XCTAssertFalse(NativeIslandsPaintFence.passed(committed: 6, fence: 7))
         }
 
         func testLayoutValidationTakesOnlyAFenceInRange() {
             func error(_ fence: Any) -> String? {
-                controller.validateLayout(components: [], order: [], exclusions: [:], cutouts: [:], fence: fence)
+                var refusal: String?
+                controller.applyLayout(components: [], order: [], exclusions: [:], cutouts: [:], fence: fence, failure: { refusal = $1 })
+                return refusal
             }
             XCTAssertNil(error(0))
             XCTAssertNil(error(1023))

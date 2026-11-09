@@ -7,61 +7,56 @@
     }
 
     extension NativeIslandsContainer {
-        func applyPanes(_ panes: [String: IslandPane], scrollContainers: [IslandScrollContainer]) {
+        /// A scroll container's solid background, painted natively under the WebView below the
+        /// island named by `under` (or above every island when nil).
+        struct Pane {
+            let view: UIView
+            var container: IslandScrollContainer
+            var under: String?
+        }
+
+        func applyPanes(_ incoming: [String: IslandPane], scrollContainers: [IslandScrollContainer]) {
             let containers = Dictionary(scrollContainers.map { ($0.id, $0) }) { first, _ in first }
-            paneContainers = containers.filter { panes[$0.key] != nil }
-            paneUnder = panes.compactMapValues(\.under)
-            for (id, view) in paneViews where paneContainers[id] == nil {
-                view.removeFromSuperview()
-                paneViews[id] = nil
+            for (id, pane) in panes where incoming[id] == nil || containers[id] == nil {
+                pane.view.removeFromSuperview()
+                panes[id] = nil
             }
-            for id in paneContainers.keys {
-                let view = paneViews[id] ?? {
+            for (id, pane) in incoming {
+                guard let container = containers[id] else { continue }
+                let view = panes[id]?.view ?? {
                     let view = UIView()
                     view.isUserInteractionEnabled = false
-                    paneViews[id] = view
                     return view
                 }()
-                view.backgroundColor = panes[id]?.color
+                view.backgroundColor = pane.color
+                panes[id] = Pane(view: view, container: container, under: pane.under)
             }
-            updatePaneGeometry()
         }
 
         func orderPanes() {
-            for (id, view) in paneViews {
-                let above = paneUnder[id].flatMap { order.firstIndex(of: $0) }.flatMap { start in
-                    order[start...].lazy.compactMap { self.hosts[$0] }.first { $0.superview === self.documentLayer }
+            for pane in panes.values {
+                let above = pane.under.flatMap { order.firstIndex(of: $0) }.flatMap { start in
+                    order[start...].lazy.compactMap { self.hosts[$0]?.view }.first { $0.superview === self.underlayPlane }
                 }
                 if let above {
-                    documentLayer.insertSubview(view, belowSubview: above)
+                    underlayPlane.insertSubview(pane.view, belowSubview: above)
                 } else {
-                    documentLayer.addSubview(view)
+                    underlayPlane.addSubview(pane.view)
                 }
             }
         }
 
-        func updatePaneGeometry() {
-            for (id, view) in paneViews {
-                guard let pane = paneContainers[id] else { continue }
-                let screen = screenIslandRect(
-                    IslandRegion(
-                        rect: pane.rect,
-                        scrollPath: pane.scrollPath,
-                        coordinateSpace: pane.coordinateSpace,
-                        sticky: nil,
-                        motionPath: pane.motionPath
-                    )
-                )
-                view.frame = documentLayer.convert(screen.cgRect, from: self)
-                applyMotion(trackedMoves(pane.motionPath), scale: 1, to: view.layer)
+        func placePanes(in frame: NIMotionFrame) {
+            for pane in panes.values {
+                let screen = screenIslandRect(pane.container.scrollport, in: frame)
+                pane.view.frame = underlayPlane.convert(screen.cgRect, from: self)
+                motions.applyMoves(pane.container.motionPath, scale: 1, to: pane.view.layer, in: frame)
             }
         }
 
         func removeAllPanes() {
-            paneViews.values.forEach { $0.removeFromSuperview() }
-            paneViews.removeAll()
-            paneContainers.removeAll()
-            paneUnder.removeAll()
+            panes.values.forEach { $0.view.removeFromSuperview() }
+            panes.removeAll()
         }
     }
 #endif

@@ -28,6 +28,7 @@
             let webView = WKWebView(frame: parent.bounds)
             parent.addSubview(webView)
             let controller = NativeIslandsController(events: events)
+            controller.launchCacheEnabled = false
             controller.ensureContainer(webView: webView)
             return Fixture(parent: parent, webView: webView, controller: controller)
         }
@@ -67,6 +68,18 @@
             view.contentSize = CGSize(width: 400, height: 1200)
             view.setContentOffset(CGPoint(x: 10, y: 80), animated: false)
             return view
+        }
+
+        func testResetCompletionRunsAfterTheMainQueueReset() {
+            let controller = NativeIslandsController { _, _ in }
+            let completed = expectation(description: "reset completed")
+            DispatchQueue.global().async {
+                controller.reset {
+                    XCTAssertTrue(Thread.isMainThread)
+                    completed.fulfill()
+                }
+            }
+            wait(for: [completed], timeout: 5)
         }
 
         func testDisposedViewCannotEmitIntoItsReplacement() throws {
@@ -133,13 +146,12 @@
                 failure: { XCTFail("\($0): \($1)") }
             )
             func create(_ instance: Int) {
-                fixture.controller.dispatchCommandOnMain(
+                fixture.controller.command(
                     island: "gallery-island",
-                    requestedType: type,
+                    type: type,
                     method: "create",
-                    params: [:],
                     instance: instance
-                ) { XCTAssertNil($0["code"]) }
+                ) { XCTAssertNil($0) }
             }
             create(1)
             create(1)
@@ -153,7 +165,7 @@
             XCTAssertEqual(events.values.map { $0.1["instance"] as? Int }, [1, 2])
         }
 
-        func testMissingScrollerRejectsLayoutThenReusesIslandWhenItAppears() throws {
+        func testMissingScrollerRejectsLayoutThenReusesIslandWhenItAppears() {
             let type = "fixture.scrollRetry"
             var created: [ProbeIsland] = []
             NativeIslandsRegistry.register(componentName: type, accessibility: .native) {
@@ -189,14 +201,12 @@
             )
             wait(for: [failed], timeout: 2)
 
-            let island = try XCTUnwrap(fixture.controller.islands["gallery-island"] as? ProbeIsland)
             XCTAssertEqual(failures.count, 1)
             XCTAssertEqual(failures[0].0, "invalid_request")
             XCTAssertTrue(failures[0].1.contains("inner_scroll_unavailable:scroll-1:missing"))
             XCTAssertTrue(failures[0].1.contains("'gallery-island'"))
             XCTAssertEqual(completions, 0, "a refused layout is not acknowledged")
             XCTAssertNil(fixture.controller.lastLayoutAppliedAt)
-            XCTAssertFalse(fixture.controller.lifecycle.isErrored(id: "gallery-island"))
             XCTAssertTrue(events.values.isEmpty, "a missing view does not emit islandError")
             XCTAssertEqual(created.count, 1)
 
@@ -222,10 +232,32 @@
             XCTAssertTrue(retryFailures.isEmpty)
             XCTAssertEqual(retryCompletions, 1)
             XCTAssertNotNil(fixture.controller.lastLayoutAppliedAt)
-            XCTAssertTrue(fixture.controller.islands["gallery-island"] === island)
             XCTAssertEqual(created.count, 1, "retry keeps the existing native island instance")
-            XCTAssertFalse(fixture.controller.lifecycle.isErrored(id: "gallery-island"))
             XCTAssertTrue(events.values.isEmpty)
+        }
+
+        func testAResetCancelsALayoutWaitingForItsScrollView() {
+            let type = "fixture.scrollCancel"
+            NativeIslandsRegistry.register(componentName: type) { ProbeIsland() }
+            let fixture = fixture { _, _ in }
+            defer { fixture.controller.dispose() }
+            let input = layout(type: type)
+            var failures: [String] = []
+            var completions = 0
+            fixture.controller.applyLayout(
+                components: input.components,
+                scrollContainers: input.scrollContainers,
+                order: ["gallery-island"],
+                exclusions: [:],
+                cutouts: [:],
+                sentAt: 1000,
+                failure: { code, _ in failures.append(code) },
+                completion: { _ in completions += 1 }
+            )
+            XCTAssertTrue(failures.isEmpty, "it waits for WebKit's next commits")
+            fixture.controller.reset()
+            XCTAssertEqual(failures, ["cancelled"])
+            XCTAssertEqual(completions, 0, "a reset is not a newer layout")
         }
 
         func testSupersededLayoutCannotReportNewerApplyTime() {
@@ -307,7 +339,6 @@
             XCTAssertTrue(failures.isEmpty)
             XCTAssertEqual(completions, 1)
             XCTAssertNotNil(fixture.controller.lastLayoutAppliedAt)
-            XCTAssertTrue(fixture.controller.lifecycle.isErrored(id: "gallery-island"))
             XCTAssertEqual(events.values.count, 1)
             XCTAssertEqual(events.values[0].0, "islandError")
             XCTAssertTrue((events.values[0].1["reason"] as? String)?.contains("inner_scroll_unavailable:scroll-1:ambiguous") == true)

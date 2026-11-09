@@ -6,8 +6,6 @@ struct NICornerRadii: Equatable {
     var bottomRight: CGFloat
     var bottomLeft: CGFloat
 
-    static let square = NICornerRadii(uniform: 0)
-
     init(
         topLeft: CGFloat,
         topRight: CGFloat,
@@ -126,3 +124,26 @@ struct NICornerRadii: Equatable {
             insideCorner(radii.bottomLeft, CGVector(dx: -1, dy: 1))
     }
 }
+
+#if canImport(UIKit)
+    import UIKit
+
+    extension NICornerRadii {
+        var maskedCorners: CACornerMask {
+            var corners: CACornerMask = []
+            if topLeft > 0 {
+                corners.insert(.layerMinXMinYCorner)
+            }
+            if topRight > 0 {
+                corners.insert(.layerMaxXMinYCorner)
+            }
+            if bottomRight > 0 {
+                corners.insert(.layerMaxXMaxYCorner)
+            }
+            if bottomLeft > 0 {
+                corners.insert(.layerMinXMaxYCorner)
+            }
+            return corners
+        }
+    }
+#endif

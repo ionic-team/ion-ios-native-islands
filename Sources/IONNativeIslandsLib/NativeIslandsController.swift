@@ -2,34 +2,57 @@
     import UIKit
     import WebKit
 
+    /// Native Islands for one WebView, driven by the bridge operations as a carrier receives them:
+    /// each payload is checked here, so carriers only pass it on and answer with what comes back.
     public final class NativeIslandsController {
-        let container = NativeIslandsContainer()
-        let security = NIBridgeSecurity()
-        let events: (_ event: String, _ payload: [String: Any]) -> Void
-        let lifecycle = NIIslandLifecycleState<[String: Any]>()
-        var islands: [String: NativeIsland] = [:]
-        weak var webView: WKWebView?
-        private var containerInstalled = false
-        var hostResumed = false
-        private var layoutRevision = 0
-        private let pageClock = NIPageClock()
-        var heldCalls: [HeldCall] = []
-        var fenceObserver: CFRunLoopObserver?
-        weak var fenceSentinel: CALayer?
-
-        public private(set) var lastLayoutAppliedAt: Double?
-
-        public static let sessionCapabilities: [String: Any] = [
+        private static let sessionCapabilities: [String: Any] = [
             "paneColor": true,
             "motionStartsAtCommit": true,
             "paintFence": true,
+            "motionScale": true,
         ]
+
+        private let pageClock = NIPageClock()
+        private let container: NativeIslandsContainer
+        private let launch = NativeIslandsLaunchFrame()
+        private let islands: NativeIslandsLifecycle
+        private let paintFence = NativeIslandsPaintFence()
+        private weak var webView: WKWebView? {
+            didSet { paintFence.webKitLayer = webView?.layer }
+        }
+
+        private var containerInstalled = false
+        /// A layout placed again on each pass WebKit can commit in, while a scroll view it needs is
+        /// missing, and how to end it: `true` when a reset cancels it, `false` when a newer layout
+        /// supersedes it.
+        private var retry: (observer: NativeIslandsCommitObserver, end: (_ cancelled: Bool) -> Void)?
+
+        /// How many main run-loop passes a layout waits for a scroll view WebKit makes after the
+        /// paint that shows its scroller.
+        private static let scrollViewWaitPasses = 8
+
+        /// Whether the islands a page shows first are cached and shown at the next launch before the
+        /// page lays out.
+        public var launchCacheEnabled: Bool {
+            get { launch.enabled }
+            set { launch.enabled = newValue }
+        }
+
+        public var launchCacheStore: UserDefaults {
+            get { launch.store }
+            set { launch.store = newValue }
+        }
+
+        public private(set) var lastLayoutAppliedAt: Double?
 
         public init(
             events: @escaping (_ event: String, _ payload: [String: Any]) -> Void
         ) {
-            self.events = events
-            container.pageClock = pageClock
+            self.container = NativeIslandsContainer(pageClock: pageClock)
+            self.islands = NativeIslandsLifecycle(container: container, launch: launch, events: events)
+            islands.installContainer = { [weak self] in
+                self?.ensureContainer(webView: nil)
+            }
         }
 
         public func ensureContainer(webView: WKWebView?) {
@@ -53,209 +76,213 @@
             container.frame = webView.frame
             container.autoresizingMask = webView.autoresizingMask
             container.attach(webView: webView)
-            parent.insertSubview(
-                container,
-                at: min(index, parent.subviews.count)
-            )
+            parent.insertSubview(container, at: min(index, parent.subviews.count))
             containerInstalled = true
             NativeIslandsScenes.register(webView: webView, scene: container)
-            container.onIslandVisibility = { [weak self] id, visible in
-                self?.islands[id]?.setViewportVisible(visible)
+            container.onIslandVisibility = { [weak islands] id, visible in
+                islands?.setViewportVisible(visible, id: id)
             }
+            islands.showLaunchFrame()
         }
 
-        public func validateLayout(
-            components: [[String: Any]],
-            scrollContainers: [[String: Any]] = [],
-            order: [String],
-            exclusions: [String: Any],
-            cutouts: [String: Any],
-            tints: [String: Any] = [:],
-            canvasColor: Any? = nil,
-            panes: Any? = nil,
-            motions: Any? = nil,
-            sentAt: Any? = nil,
-            fence: Any? = nil
-        )
-            -> String? {
-            if canvasColor != nil, NICanvasColor(canvasColor) == nil {
-                return "applyLayout canvasColor must be an opaque hex color"
-            }
-            if NativeIslandsLayoutParsing.panes(from: panes) == nil {
-                return "applyLayout panes must map scroll container ids to an opaque hex color and an optional island id"
-            }
-            if sentAt != nil, (NISafeGeometry.strictNumber(sentAt) ?? -1) < 0 {
-                return "applyLayout sentAt must be a non-negative number"
-            }
-            if motions != nil, sentAt == nil {
-                return "applyLayout motions require sentAt"
-            }
-            if fence != nil, !(0 ..< Self.fenceRange).contains(security.strictInteger(fence) ?? -1) {
-                return "applyLayout fence must be an integer from 0 to \(Self.fenceRange - 1)"
-            }
-            return NILayoutValidation.error(
-                components: components,
-                scrollContainers: scrollContainers,
-                order: order,
-                exclusions: exclusions,
-                cutouts: cutouts,
-                tints: tints,
-                motions: motions
-            )
-        }
-
-        public func validateOperation(
-            _ operation: String,
-            payload: [String: Any]
-        )
-            -> [String: Any]? {
-            do {
-                try security.validateOperation(operation, payload: payload)
-                return nil
-            } catch let exception as NIBridgeSecurityError {
-                return error(code: exception.code, message: exception.message)
-            } catch {
-                return self.error(
-                    code: "internal_error",
-                    message: "operation validation failed"
-                )
-            }
-        }
-
-        public func validateLayoutOperation(
-            _ payload: [String: Any]
-        )
-            -> [String: Any]? {
-            validateOperation("applyLayout", payload: payload)
-        }
-
+        /// Checks and applies an `applyLayout` payload, in order and with its `fence` in its page's
+        /// commit. `completion` gets its acknowledgement: the page time it applied at, or nothing when
+        /// a newer layout superseded it.
         public func applyLayout(
-            components rawComponents: [[String: Any]],
-            scrollContainers rawScrollContainers: [[String: Any]] = [],
-            order: [String],
-            exclusions rawExclusions: [String: Any],
-            cutouts rawCutouts: [String: Any],
-            tints rawTints: [String: Any] = [:],
-            canvasColor: String? = nil,
-            panes rawPanes: Any? = nil,
-            motions rawMotions: Any? = nil,
-            sentAt: Double? = nil,
-            fence: Int? = nil,
-            failure: @escaping (_ code: String, _ message: String) -> Void = { _, _ in },
-            completion: @escaping (Double?) -> Void = { _ in }
+            _ payload: Any?,
+            failure: @escaping (_ code: String, _ message: String) -> Void,
+            completion: @escaping ([String: Any]) -> Void
         ) {
-            if let sentAt {
+            guard let payload = validatedPayload(for: "applyLayout", payload, failure: failure) else { return }
+            let layout: NativeIslandsLayout
+            switch NativeIslandsLayoutParsing.layout(payload) {
+            case .success(let read):
+                layout = read
+            case .failure(let refusal):
+                return failure(refusal.code, refusal.message)
+            }
+            if let sentAt = layout.sentAt {
                 pageClock.sample(pageMilliseconds: sentAt, nativeSeconds: CACurrentMediaTime())
             }
-            let motions = NIMotionPayload.parse(rawMotions)
-            let canvas = NICanvasColor(canvasColor).map {
-                UIColor(red: $0.red, green: $0.green, blue: $0.blue, alpha: 1)
-            }
-            let components = NativeIslandsLayoutParsing.components(from: rawComponents)
-            let scrollContainers = NativeIslandsLayoutParsing.scrollContainers(from: rawScrollContainers)
-            let exclusions = NativeIslandsLayoutParsing.regions(from: rawExclusions)
-            let cutouts = NativeIslandsLayoutParsing.regions(from: rawCutouts)
-            let tints = NativeIslandsLayoutParsing.regions(from: rawTints)
-            let panes = NativeIslandsLayoutParsing.panes(from: rawPanes) ?? [:]
-
-            inOrder(fence: fence) {
-                self.lastLayoutAppliedAt = nil
-                self.layoutRevision &+= 1
-                let layoutRevision = self.layoutRevision
-                self.ensureContainer(webView: self.webView)
-                guard self.canApplyLayout(components) else {
-                    failure(
-                        "internal_error",
-                        "Native Islands could not install its native host because the WebView is not attached."
-                    )
-                    return
-                }
-                let accepted = self.acceptComponents(components)
-                let applyLedger = {
-                    self.container.applyLedger(
-                        components: accepted,
-                        scrollContainers: scrollContainers,
-                        order: order,
-                        exclusions: exclusions,
-                        cutouts: cutouts,
-                        tints: tints,
-                        motions: motions,
-                        panes: panes
-                    )
-                }
-                let finish = { (innerScrollFailures: [String: String]) in
-                    let missing = innerScrollFailures.filter { $0.value.hasSuffix(":missing") }
-                    for (id, reason) in innerScrollFailures where missing[id] == nil {
-                        self.reportError(id: id, reason: reason)
-                    }
-                    self.container.setCompositingActive(accepted.contains { $0.active }, canvasColor: canvas)
-                    guard missing.isEmpty else {
-                        let reasons = Set(missing.values).sorted().joined(separator: ", ")
-                        let ids = missing.keys.sorted().map { "'\($0)'" }.joined(separator: ", ")
-                        failure("invalid_request", "\(reasons) for \(ids)")
-                        return
-                    }
-                    self.lastLayoutAppliedAt = self.pageClock.pageTime(nativeSeconds: CACurrentMediaTime())
-                    completion(self.lastLayoutAppliedAt)
-                }
-                let innerScrollFailures = applyLedger()
-                guard innerScrollFailures.values.contains(where: { $0.hasSuffix(":missing") }) else {
-                    finish(innerScrollFailures)
-                    return
-                }
-                DispatchQueue.main.async {
-                    guard self.layoutRevision == layoutRevision else { return completion(nil) }
-                    let retried = applyLedger()
-                    guard retried.values.contains(where: { $0.hasSuffix(":missing") }) else {
-                        finish(retried)
-                        return
-                    }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(250)) {
-                        guard self.layoutRevision == layoutRevision else { return completion(nil) }
-                        finish(applyLedger())
-                    }
+            let cancel = { failure("cancelled", "Native Islands was reset before this layout applied.") }
+            inOrder(fence: layout.fence, cancel: cancel) {
+                self.apply(layout, failure: failure, cancel: cancel) { appliedAt in
+                    completion(appliedAt.map { ["appliedAt": $0] } ?? [:])
                 }
             }
         }
 
-        /// Registers each component's layout type, drops islands that failed to
-        /// materialize, and tears down the ones the new ledger no longer names.
-        private func acceptComponents(
-            _ components: [(IslandComponent, String)]
-        )
-            -> [IslandComponent] {
-            lifecycle.retain(ids: Set(components.map(\.0.id)))
-            var accepted: [IslandComponent] = []
-            for (component, type) in components {
-                switch lifecycle.registerType(id: component.id, type: type) {
-                case .registered, .matched:
-                    break
-                case .typeMismatch:
-                    reportError(
-                        id: component.id,
-                        reason: "invalid_request: component type does not match its registered layout type"
-                    )
-                    continue
-                }
-                var acceptedComponent = component
-                if component.active,
-                   !ensureIsland(id: component.id, type: type) {
-                    acceptedComponent.active = false
-                    acceptedComponent.rect = nil
-                }
-                accepted.append(acceptedComponent)
+        /// Checks a `command` payload and runs the command in order.
+        public func command(
+            _ payload: Any?,
+            failure: @escaping (_ code: String, _ message: String) -> Void,
+            completion: @escaping () -> Void
+        ) {
+            guard let payload = validatedPayload(for: "command", payload, failure: failure) else { return }
+            guard
+                let island = payload["island"] as? String,
+                let type = payload["islandType"] as? String,
+                let method = payload["method"] as? String
+            else {
+                return failure("invalid_request", "command envelope is incomplete")
             }
+            guard let params = payload["params"] == nil ? [:] : payload["params"] as? [String: Any] else {
+                return failure("invalid_request", "command params must be an object")
+            }
+            let instance = payload["instance"]
+            let cancel = { failure("cancelled", "Native Islands was reset before this command ran.") }
+            inOrder(cancel: cancel) {
+                if let refusal = self.islands.command(
+                    island: island,
+                    type: type,
+                    method: method,
+                    params: params,
+                    instance: NIBridgeSecurity.commandInstance(instance)
+                ) {
+                    failure(refusal.code, refusal.message)
+                } else {
+                    completion()
+                }
+            }
+        }
 
-            let liveIDs = Set(accepted.map(\.id))
-            let staleIDs = islands.keys.filter { !liveIDs.contains($0) }
-            for id in staleIDs {
-                container.removeIsland(id: id)
-                islands[id]?.onDestroy()
-                islands[id] = nil
-                lifecycle.removeType(id: id)
+        /// Checks a `reset` payload and resets. `completion` gets the session's platform capabilities.
+        public func reset(
+            _ payload: Any?,
+            failure: (_ code: String, _ message: String) -> Void,
+            completion: @escaping ([String: Any]) -> Void
+        ) {
+            guard validatedPayload(for: "reset", payload, failure: failure) != nil else { return }
+            reset { completion(Self.sessionCapabilities) }
+        }
+
+        /// `payload` as an object, when it and its `operation` pass the bridge's shape checks;
+        /// otherwise nil, after `failure` is told why.
+        public func validatedPayload(
+            for operation: String,
+            _ payload: Any?,
+            failure: (_ code: String, _ message: String) -> Void
+        )
+            -> [String: Any]? {
+            guard let object = payload as? [String: Any] else {
+                failure("invalid_request", "operation payload must be an object")
+                return nil
             }
-            lifecycle.retain(ids: liveIDs)
-            return accepted
+            if let refusal = NIBridgeSecurity.operationError(operation, payload: object) {
+                failure(refusal.code, refusal.message)
+                return nil
+            }
+            return object
+        }
+
+        public func reset(completion: @escaping () -> Void = {}) {
+            onMain {
+                self.dropQueuedWork()
+                self.pageClock.clear()
+                if !self.islands.reset() {
+                    self.container.setCompositingActive(false)
+                }
+                completion()
+            }
+        }
+
+        public func onHostResume() {
+            onMain { [weak self] in
+                self?.islands.setResumed(true)
+            }
+        }
+
+        public func onHostPause() {
+            onMain { [weak self] in
+                self?.islands.setResumed(false)
+            }
+        }
+
+        public func dispose() {
+            onMain {
+                self.dropQueuedWork()
+                self.islands.dispose()
+                if let webView = self.webView {
+                    NativeIslandsScenes.unregister(webView: webView)
+                }
+                self.container.detachWebView()
+                self.container.removeFromSuperview()
+                self.containerInstalled = false
+            }
+        }
+
+        private func apply(
+            _ layout: NativeIslandsLayout,
+            failure: @escaping (_ code: String, _ message: String) -> Void,
+            cancel: @escaping () -> Void,
+            completion: @escaping (Double?) -> Void
+        ) {
+            lastLayoutAppliedAt = nil
+            endRetry(cancelled: false)
+            ensureContainer(webView: webView)
+            guard canApplyLayout(layout.components) else {
+                failure("internal_error", "Native Islands could not install its native host because the WebView is not attached.")
+                return
+            }
+            let accepted = islands.accept(layout.components, canvasColor: layout.canvasColor)
+            let place = {
+                self.container.applyLedger(
+                    components: accepted,
+                    scrollContainers: layout.scrollContainers,
+                    order: layout.order,
+                    exclusions: layout.exclusions,
+                    cutouts: layout.cutouts,
+                    tints: layout.tints,
+                    motions: layout.motions,
+                    panes: layout.panes
+                )
+            }
+            let finish = { self.finish(layout, accepted: accepted, failures: $0, failure: failure, completion: completion) }
+            let failures = place()
+            guard failures.values.contains(where: { $0.kind == .missing }) else { return finish(failures) }
+            // WebKit can build an inner scroller's scroll view in a commit after the paint that shows it.
+            var passes = 0
+            let observer = NativeIslandsCommitObserver(order: NativeIslandsCommitObserver.paintFenceOrder) { [weak self] in
+                passes += 1
+                let failures = place()
+                guard passes >= Self.scrollViewWaitPasses || !failures.values.contains(where: { $0.kind == .missing }) else { return }
+                finish(failures)
+                // Released last: the observer runs this closure.
+                self?.retry = nil
+            }
+            retry = (observer, { $0 ? cancel() : completion(nil) })
+        }
+
+        /// Ends the layout waiting for a scroll view, if one is.
+        private func endRetry(cancelled: Bool) {
+            guard let retry else { return }
+            self.retry = nil
+            retry.end(cancelled)
+        }
+
+        /// Fails the islands whose scrollers cannot be followed, and acknowledges the layout unless a
+        /// scroller it needs has no scroll view yet: then the page is told which, and sends it again.
+        private func finish(
+            _ layout: NativeIslandsLayout,
+            accepted: [IslandComponent],
+            failures: [String: NIInnerScrollFailure],
+            failure: (_ code: String, _ message: String) -> Void,
+            completion: (Double?) -> Void
+        ) {
+            let missing = failures.filter { $0.value.kind == .missing }
+            for (id, scrollFailure) in failures where scrollFailure.kind != .missing {
+                islands.reportError(id: id, reason: scrollFailure.reason)
+            }
+            container.setCompositingActive(accepted.contains { $0.active }, canvasColor: NICanvasColor(layout.canvasColor)?.uiColor)
+            guard missing.isEmpty else {
+                let reasons = Set(missing.values.map(\.reason)).sorted().joined(separator: ", ")
+                let ids = missing.keys.sorted().map { "'\($0)'" }.joined(separator: ", ")
+                failure("invalid_request", "\(reasons) for \(ids)")
+                return
+            }
+            islands.saveLaunchFrame()
+            lastLayoutAppliedAt = pageClock.pageTime(nativeSeconds: CACurrentMediaTime())
+            completion(lastLayoutAppliedAt)
         }
 
         private func canApplyLayout(
@@ -268,129 +295,24 @@
                     webView?.superview === container)
         }
 
-        public func reset(completion: @escaping () -> Void = {}) {
-            let performReset = {
-                self.dropHeldCalls()
-                self.layoutRevision &+= 1
-                self.container.removeAllIslands()
-                self.islands.values.forEach { $0.onDestroy() }
-                self.islands.removeAll()
-                self.lifecycle.reset()
-                self.container.setCompositingActive(false)
-                self.pageClock.clear()
-                completion()
-            }
-            if Thread.isMainThread {
-                performReset()
-            } else {
-                DispatchQueue.main.async(execute: performReset)
-            }
+        /// Runs `work` on the main thread after earlier calls and, with a fence, after its web commit.
+        /// `cancel` answers the call instead if a reset drops it first.
+        private func inOrder(fence: Int? = nil, cancel: @escaping () -> Void, _ work: @escaping () -> Void) {
+            onMain { self.paintFence.enqueue(fence: fence, cancel: cancel, work) }
         }
 
-        public func dispatchCommand(
-            island: String,
-            requestedType: String,
-            method: String,
-            params: [String: Any],
-            instance: Any?,
-            completion: @escaping ([String: Any]) -> Void
-        ) {
-            inOrder {
-                self.dispatchCommandOnMain(
-                    island: island,
-                    requestedType: requestedType,
-                    method: method,
-                    params: params,
-                    instance: self.security.commandInstance(instance),
-                    completion: completion
-                )
-            }
+        private func dropQueuedWork() {
+            paintFence.drop()
+            endRetry(cancelled: true)
         }
+    }
 
-        func onMain(_ work: @escaping () -> Void) {
-            if Thread.isMainThread {
-                work()
-            } else {
-                DispatchQueue.main.async(execute: work)
-            }
-        }
-
-        public func onHostResume() {
-            guard Thread.isMainThread else {
-                DispatchQueue.main.async { [weak self] in
-                    self?.onHostResume()
-                }
-                return
-            }
-            hostResumed = true
-            islands.values.forEach { $0.onResume() }
-        }
-
-        public func onHostPause() {
-            guard Thread.isMainThread else {
-                DispatchQueue.main.async { [weak self] in
-                    self?.onHostPause()
-                }
-                return
-            }
-            hostResumed = false
-            islands.values.forEach { $0.onPause() }
-        }
-
-        public func dispose() {
-            guard Thread.isMainThread else {
-                DispatchQueue.main.async { [self] in
-                    dispose()
-                }
-                return
-            }
-            dropHeldCalls()
-            layoutRevision &+= 1
-            container.removeAllIslands()
-            islands.values.forEach { $0.onDestroy() }
-            islands.removeAll()
-            lifecycle.clear()
-            if let webView {
-                NativeIslandsScenes.unregister(webView: webView)
-            }
-            container.detachWebView()
-            container.removeFromSuperview()
-            containerInstalled = false
-        }
-
-        private func ensureIsland(
-            id: String,
-            type: String
-        )
-            -> Bool {
-            guard let island = islands[id] ?? constructIsland(id: id, type: type) else { return false }
-            for command in lifecycle.drain(id: id) {
-                deliver(
-                    id: id,
-                    islands[id] ?? island,
-                    method: command.method,
-                    properties: command.payload,
-                    instance: command.instance
-                )
-            }
-            return true
-        }
-
-        func reportError(
-            id: String,
-            reason: String
-        ) {
-            if lifecycle.markErrored(id: id) {
-                events("islandError", ["island": id, "reason": reason])
-            }
-        }
-
-        func error(
-            code: String,
-            message: String
-        )
-            -> [String: Any] {
-            ["code": code, "error": message]
+    /// Runs `work` at once on the main thread, or next on the main queue from any other.
+    func onMain(_ work: @escaping () -> Void) {
+        if Thread.isMainThread {
+            work()
+        } else {
+            DispatchQueue.main.async(execute: work)
         }
     }
 #endif

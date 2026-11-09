@@ -1,10 +1,8 @@
 # IONNativeIslandsLib
 
 The iOS runtime for Native Islands. It places app-owned native views in a web
-document, attaches document islands to the public `WKWebView` scroll hierarchy,
-clips their declared rounded shape, preserves CSS paint order, and assigns each
-gesture to one owner at touch-down. Transparent rounded corners remain owned by the
-web layer.
+document, follows the `WKWebView` scroll hierarchy, clips each island to its rounded
+shape, keeps CSS paint order, and gives each gesture to one owner at touch-down.
 
 Capacitor and Cordova bridge packages consume this library. App and plugin authors
 also use it to register their own native component factories.
@@ -83,12 +81,23 @@ instance replaces it with a fresh component from the factory.
 `NativeIslandEventEmitting` is optional and stamps emitted payloads with the island ID
 and instance. Events from replaced or disposed components are ignored.
 
-`applyLayout` passes the applied page-clock timestamp to its completion closure, or
-`nil` if a newer layout superseded a pending retry.
+`applyLayout` completes with `["appliedAt": <page time in ms>]`, or with an empty
+dictionary if a newer layout superseded it.
+
+A native host that places components itself, such as a native list's cells, can create
+one with `NativeIslandsRegistry.make(componentName:)`. It returns `nil` for an unknown
+name or a throwing factory, and the caller owns the component's lifecycle.
 
 `onResume`, `onPause`, `onDestroy`, and `setViewportVisible` have default
 implementations. Components that own active resources should use those callbacks
 to stop work while backgrounded, offscreen, or disposed.
+
+## Launch cache
+
+The islands fixed to the screen in the first layouts after launch are cached, with their
+properties, in `UserDefaults` (`launchCacheStore`, `.standard` by default). The next launch
+shows them before the page lays out. Set `launchCacheEnabled = false` on the controller to
+turn this off.
 
 ## Whole-scene effects
 
@@ -104,8 +113,9 @@ Do not move the WebView or individual island hosts separately.
 
 ## Errors
 
-Command failures use the codes `invalid_request`, `unknown_command`, `handler_failed`,
-and `internal_error`. A factory failure emits `islandError` for only the affected
+Command and layout failures use the codes `invalid_request`, `unknown_command`,
+`handler_failed`, and `internal_error`, and `cancelled` when a reset or dispose drops a
+call before it ran. A factory failure emits `islandError` for only the affected
 component.
 
 ## Requirements

@@ -46,20 +46,18 @@
             }
 
             apply(["pane": IslandPane(color: .red, under: "inside")])
-            let view = try XCTUnwrap(container.paneViews["pane"])
-            XCTAssertEqual(view.backgroundColor, .red)
+            let view = try XCTUnwrap(container.underlayPlane.subviews.first { $0.backgroundColor == .red })
             XCTAssertEqual(view.frame, CGRect(x: 0, y: 100, width: 402, height: 600))
-            let layers = container.documentLayer.subviews
+            let layers = container.underlayPlane.subviews
             let index = try XCTUnwrap(layers.firstIndex(of: view))
-            XCTAssertEqual(layers.firstIndex { $0 === container.hosts["under"] }, index - 1)
-            XCTAssertEqual(layers.firstIndex { $0 === container.hosts["inside"] }, index + 1)
+            XCTAssertEqual(layers.firstIndex { $0 === container.hosts["under"]?.view }, index - 1)
+            XCTAssertEqual(layers.firstIndex { $0 === container.hosts["inside"]?.view }, index + 1)
 
             apply(["pane": IslandPane(color: .red, under: nil)])
-            XCTAssertTrue(container.documentLayer.subviews.last === view, "a pane no island is painted above covers them all")
+            XCTAssertTrue(container.underlayPlane.subviews.last === view, "a pane no island is painted above covers them all")
 
             apply([:])
             XCTAssertNil(view.superview)
-            XCTAssertTrue(container.paneViews.isEmpty)
         }
 
         func testPlaneChangesKeepContentInItsWindowAndPreserveOrderAndClipping() throws {
@@ -67,7 +65,9 @@
                 var detachments = 0
                 override func didMoveToWindow() {
                     super.didMoveToWindow()
-                    if window == nil { detachments += 1 }
+                    if window == nil {
+                        detachments += 1
+                    }
                 }
             }
             let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 874))
@@ -80,9 +80,10 @@
             let content = Content()
             container.registerIsland(id: "preview", view: content, accessibility: .native)
             container.registerIsland(id: "peer", view: UIView(), accessibility: .native)
-            let host = try XCTUnwrap(container.hosts["preview"])
-            let contentHost = try XCTUnwrap(container.contentHosts["preview"])
-            let peerHost = try XCTUnwrap(container.hosts["peer"])
+            let host = try XCTUnwrap(container.hosts["preview"]?.view)
+            let contentHost = try XCTUnwrap(container.hosts["preview"]?.content)
+            let body = try XCTUnwrap(container.hosts["preview"]?.body)
+            let peerHost = try XCTUnwrap(container.hosts["peer"]?.view)
             XCTAssertTrue(content.window === window)
             content.detachments = 0
             let cutout = IslandRegion(
@@ -113,18 +114,18 @@
                 ).isEmpty)
                 container.layoutIfNeeded()
 
-                let parent = plane == .overlay ? container.overlayLayer : container.documentLayer
-                XCTAssertTrue(container.hosts["preview"] === host)
-                XCTAssertTrue(container.contentHosts["preview"] === contentHost)
-                XCTAssertTrue(content.superview === contentHost)
+                let parent = plane == .overlay ? container.overlayPlane : container.underlayPlane
+                XCTAssertTrue(container.hosts["preview"]?.view === host)
+                XCTAssertTrue(container.hosts["preview"]?.content === contentHost)
+                XCTAssertTrue(content.superview === body)
                 XCTAssertTrue(content.window === window)
                 XCTAssertEqual(content.detachments, 0, "a plane change must not restart the native content lifetime")
                 XCTAssertTrue(host.superview === parent)
                 XCTAssertTrue(parent.subviews.first === peerHost)
                 XCTAssertTrue(parent.subviews.last === host)
                 XCTAssertEqual(container.convert(host.bounds, from: host), CGRect(x: 20, y: 300, width: 100, height: 100))
-                XCTAssertEqual(host.layer.cornerRadius, 12)
-                XCTAssertTrue(host.layer.masksToBounds)
+                XCTAssertEqual(body.layer.cornerRadius, 12)
+                XCTAssertTrue(body.layer.masksToBounds)
                 let mask = try XCTUnwrap(contentHost.layer.mask as? CAShapeLayer)
                 let path = try XCTUnwrap(mask.path)
                 XCTAssertFalse(path.contains(CGPoint(x: 25, y: 25), using: .evenOdd))

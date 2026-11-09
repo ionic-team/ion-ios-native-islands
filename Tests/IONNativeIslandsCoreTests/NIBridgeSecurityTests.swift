@@ -2,84 +2,40 @@ import XCTest
 @testable import IONNativeIslandsLib
 
 final class NIBridgeSecurityTests: XCTestCase {
-    private let security = NIBridgeSecurity()
-
-    func testAcceptsFixedCreateAndUpdateCommands() {
-        for method in ["create", "update"] {
-            XCTAssertNoThrow(
-                try security.validateCommand(
-                    island: "map-1",
-                    type: "acme.map",
-                    method: method,
-                    params: ["zoom": 4],
-                    instance: 1
-                )
-            )
-        }
+    private func command(
+        island: String = "map-1",
+        method: String,
+        params: [String: Any] = [:],
+        instance: Int? = 1
+    ) -> Result<NIIslandCommand, NIBridgeError> {
+        NIBridgeSecurity.command(island: island, type: "acme.map", method: method, params: params, instance: instance)
     }
 
-    func testACreateNamesTheInstanceNativeKeepsItsViewFor() {
+    func testReadsCreateWithItsInstanceAndUpdate() throws {
+        XCTAssertEqual(try command(method: "create", params: ["zoom": 4], instance: 3).get(), .create(instance: 3))
+        XCTAssertEqual(try command(method: "update", instance: nil).get(), .update)
+    }
+
+    func testRefusesWhatNativeCannotRun() {
+        XCTAssertEqual(command(method: "capture").failure?.code, "unknown_command")
         for instance in [nil, 0] as [Int?] {
-            assertCode("invalid_request") {
-                try self.security.validateCommand(
-                    island: "map-1",
-                    type: "acme.map",
-                    method: "create",
-                    params: [:],
-                    instance: instance
-                )
-            }
+            XCTAssertEqual(command(method: "create", instance: instance).failure?.code, "invalid_request")
         }
-        XCTAssertEqual(security.commandInstance(NSNumber(value: 2)), 2)
-        XCTAssertNil(security.commandInstance(NSNumber(value: 2.5)))
-        XCTAssertNil(security.commandInstance(true))
+        XCTAssertEqual(command(island: "", method: "create").failure?.code, "invalid_request")
+        XCTAssertEqual(command(method: "update", params: ["value": Date()]).failure?.code, "invalid_request")
+        XCTAssertEqual(NIBridgeSecurity.operationError("reset", payload: ["value": Date()])?.code, "invalid_request")
     }
 
-    func testRejectsUnknownCommand() {
-        assertCode("unknown_command") {
-            try self.security.validateCommand(
-                island: "map-1",
-                type: "acme.map",
-                method: "capture",
-                params: [:],
-                instance: 1
-            )
-        }
+    func testAnInstanceIsAPositiveInteger() {
+        XCTAssertEqual(NIBridgeSecurity.commandInstance(NSNumber(value: 2)), 2)
+        XCTAssertNil(NIBridgeSecurity.commandInstance(NSNumber(value: 2.5)))
+        XCTAssertNil(NIBridgeSecurity.commandInstance(true))
     }
+}
 
-    func testRejectsEmptyIdentifiersAndNonJSONPayloads() {
-        assertCode("invalid_request") {
-            try self.security.validateCommand(
-                island: "",
-                type: "acme.map",
-                method: "create",
-                params: [:],
-                instance: 1
-            )
-        }
-        assertCode("invalid_request") {
-            try self.security.validateCommand(
-                island: "map-1",
-                type: "acme.map",
-                method: "update",
-                params: ["value": Date()],
-                instance: 1
-            )
-        }
-        assertCode("invalid_request") {
-            try self.security.validateOperation(
-                "reset",
-                payload: ["value": Date()]
-            )
-        }
-    }
-
-    private func assertCode(
-        _ code: String,
-        _ action: () throws -> Void
-    ) {
-        XCTAssertThrowsError(try action()) { error in
-            XCTAssertEqual((error as? NIBridgeSecurityError)?.code, code)
-        }
+private extension Result {
+    var failure: Failure? {
+        if case let .failure(error) = self { return error }
+        return nil
     }
 }

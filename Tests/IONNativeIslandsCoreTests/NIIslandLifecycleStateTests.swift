@@ -4,114 +4,56 @@ import XCTest
 final class NIIslandLifecycleStateTests: XCTestCase {
     func testIdentityCannotChangeComponentType() {
         let state = NIIslandLifecycleState<String>()
-        XCTAssertEqual(
-            state.registerType(id: "island-1", type: "map"),
-            .registered
-        )
-        XCTAssertEqual(
-            state.registerType(id: "island-1", type: "map"),
-            .matched
-        )
-        XCTAssertEqual(
-            state.registerType(id: "island-1", type: "camera"),
-            .typeMismatch
-        )
+        XCTAssertTrue(state.registerType(id: "island-1", type: "map"))
+        XCTAssertTrue(state.registerType(id: "island-1", type: "map"))
+        XCTAssertFalse(state.registerType(id: "island-1", type: "camera"))
         XCTAssertEqual(state.type(for: "island-1"), "map")
     }
 
     func testBufferedCommandsDrainOnceInOrder() {
         let state = NIIslandLifecycleState<Int>()
-        state.buffer(
-            id: "island-1",
-            method: "create",
-            payload: 1
-        )
-        state.buffer(
-            id: "island-1",
-            method: "update",
-            payload: 2
-        )
+        state.buffer(id: "island-1", command: .create(instance: 4), payload: 1)
+        state.buffer(id: "island-1", command: .update, payload: 2)
         let drained = state.drain(id: "island-1")
-        XCTAssertEqual(drained.map(\.method), ["create", "update"])
+        XCTAssertEqual(drained.map(\.command), [.create(instance: 4), .update])
         XCTAssertEqual(drained.map(\.payload), [1, 2])
         XCTAssertTrue(state.drain(id: "island-1").isEmpty)
     }
 
-    func testMountErrorDropsPendingAndDeduplicatesReports() {
+    func testMountErrorDropsPendingAndIsReportedOnce() {
         let state = NIIslandLifecycleState<String>()
-        state.buffer(
-            id: "island-1",
-            method: "create",
-            payload: "payload"
-        )
+        state.buffer(id: "island-1", command: .update, payload: "payload")
         XCTAssertTrue(state.markErrored(id: "island-1"))
         XCTAssertFalse(state.markErrored(id: "island-1"))
         XCTAssertTrue(state.isErrored(id: "island-1"))
         XCTAssertTrue(state.drain(id: "island-1").isEmpty)
     }
 
-    func testResetClearsAllPageState() {
+    func testRetainForgetsIslandsNoLongerInTheLayout() {
         let state = NIIslandLifecycleState<String>()
-        XCTAssertTrue(
-            state.registerType(id: "island-1", type: "map") == .registered
-        )
-        state.buffer(
-            id: "island-1",
-            method: "create",
-            payload: "payload"
-        )
-        XCTAssertTrue(state.markErrored(id: "island-1"))
-        state.reset()
-        XCTAssertNil(state.type(for: "island-1"))
-        XCTAssertFalse(state.isErrored(id: "island-1"))
-        XCTAssertTrue(state.drain(id: "island-1").isEmpty)
-    }
-
-    func testRetainClearsStateForComponentsNoLongerInLayout() {
-        let state = NIIslandLifecycleState<String>()
-        XCTAssertEqual(state.registerType(id: "keep", type: "map"), .registered)
-        XCTAssertEqual(state.registerType(id: "remove", type: "map"), .registered)
-        state.buffer(
-            id: "remove",
-            method: "create",
-            payload: "pending"
-        )
+        _ = state.registerType(id: "keep", type: "map")
+        _ = state.registerType(id: "remove", type: "map")
+        _ = state.create(id: "remove", instance: 1)
+        state.buffer(id: "remove", command: .update, payload: "pending")
         XCTAssertTrue(state.markErrored(id: "remove"))
         state.retain(ids: ["keep"])
         XCTAssertEqual(state.type(for: "keep"), "map")
         XCTAssertNil(state.type(for: "remove"))
         XCTAssertTrue(state.drain(id: "remove").isEmpty)
         XCTAssertFalse(state.isErrored(id: "remove"))
+        XCTAssertEqual(state.create(id: "remove", instance: 1), .create)
     }
 
-    func testACreateForTheKeptInstanceUpdatesAndAnotherRecreates() {
+    func testTransferMovesTypeInstanceAndPendingCommands() {
         let state = NIIslandLifecycleState<String>()
-        XCTAssertEqual(state.create(id: "one", instance: 1), .create)
-        XCTAssertEqual(state.create(id: "one", instance: 1), .update)
-        XCTAssertEqual(state.instance(for: "one"), 1)
-        XCTAssertEqual(state.create(id: "one", instance: 2), .recreate)
-        XCTAssertEqual(state.instance(for: "one"), 2)
-    }
-
-    func testAnInstanceIsForgottenWithTheView() {
-        let state = NIIslandLifecycleState<String>()
-        _ = state.registerType(id: "dropped", type: "map")
-        _ = state.registerType(id: "kept", type: "map")
-        _ = state.create(id: "dropped", instance: 1)
-        _ = state.create(id: "kept", instance: 1)
-        state.retain(ids: ["kept"])
-        XCTAssertNil(state.instance(for: "dropped"))
-        XCTAssertEqual(state.create(id: "dropped", instance: 1), .create)
-        _ = state.markErrored(id: "kept")
-        XCTAssertNil(state.instance(for: "kept"))
-        _ = state.create(id: "kept", instance: 3)
-        state.reset()
-        XCTAssertNil(state.instance(for: "kept"))
-    }
-
-    func testABufferedCreateKeepsItsInstance() {
-        let state = NIIslandLifecycleState<String>()
-        state.buffer(id: "one", method: "create", payload: "first", instance: 4)
-        XCTAssertEqual(state.drain(id: "one").first?.instance, 4)
+        _ = state.registerType(id: "card", type: "app-preview")
+        _ = state.create(id: "card", instance: 7)
+        state.buffer(id: "card", command: .update, payload: "next")
+        state.transfer(from: "card", to: "studio")
+        XCTAssertNil(state.type(for: "card"))
+        XCTAssertNil(state.instance(for: "card"))
+        XCTAssertEqual(state.type(for: "studio"), "app-preview")
+        XCTAssertEqual(state.instance(for: "studio"), 7)
+        XCTAssertEqual(state.drain(id: "studio").map(\.payload), ["next"])
     }
 }

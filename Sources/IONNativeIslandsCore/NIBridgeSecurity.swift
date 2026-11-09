@@ -1,7 +1,7 @@
 import CoreFoundation
 import Foundation
 
-struct NIBridgeSecurityError: Error {
+struct NIBridgeError: Error, Equatable {
     let code: String
     let message: String
 
@@ -11,90 +11,67 @@ struct NIBridgeSecurityError: Error {
     }
 }
 
-final class NIBridgeSecurity {
-    init() {}
+/// A component command the page may send, read from its wire `method`.
+enum NIIslandCommand: Equatable {
+    case create(instance: Int)
+    case update
+}
 
-    func validateActivation(type: String) throws {
-        try validateToken(type, kind: "native component type")
-    }
-
-    func validateCommand(
+/// Shape checks on what the page sends before native acts on it.
+enum NIBridgeSecurity {
+    static func command(
         island: String,
         type: String,
         method: String,
         params: [String: Any],
         instance: Int?
-    ) throws {
-        try validateToken(island, kind: "native component id")
-        try validateToken(method, kind: "command")
-        try validateActivation(type: type)
-        guard method == "create" || method == "update" else {
-            throw NIBridgeSecurityError(
-                "unknown_command",
-                "'\(method)' is not a supported native component command"
-            )
+    )
+        -> Result<NIIslandCommand, NIBridgeError> {
+        if let error = tokenError(island, kind: "native component id") ??
+            tokenError(method, kind: "command") ??
+            tokenError(type, kind: "native component type") {
+            return .failure(error)
         }
-        guard method != "create" || (instance ?? 0) >= 1 else {
-            throw NIBridgeSecurityError(
-                "invalid_request",
-                "command create must carry a positive integer instance"
-            )
+        let command: NIIslandCommand
+        switch method {
+        case "create":
+            guard let instance, instance >= 1 else {
+                return .failure(NIBridgeError("invalid_request", "command create must carry a positive integer instance"))
+            }
+            command = .create(instance: instance)
+        case "update":
+            command = .update
+        default:
+            return .failure(NIBridgeError("unknown_command", "'\(method)' is not a supported native component command"))
         }
         guard isJSONValue(params) else {
-            throw NIBridgeSecurityError(
-                "invalid_request",
-                "command params must be JSON-compatible"
-            )
+            return .failure(NIBridgeError("invalid_request", "command params must be JSON-compatible"))
         }
+        return .success(command)
     }
 
-    func validateOperation(
+    static func operationError(
         _ operation: String,
         payload: [String: Any]
-    ) throws {
-        try validateToken(operation, kind: "operation")
+    )
+        -> NIBridgeError? {
+        if let error = tokenError(operation, kind: "operation") { return error }
         guard isJSONValue(payload) else {
-            throw NIBridgeSecurityError(
-                "invalid_request",
-                "operation payload must be JSON-compatible"
-            )
+            return NIBridgeError("invalid_request", "operation payload must be JSON-compatible")
         }
+        return nil
     }
 
-    func commandInstance(_ value: Any?) -> Int? {
-        guard let instance = strictInteger(value), instance >= 1, instance <= Int(Int32.max) else { return nil }
+    static func commandInstance(_ value: Any?) -> Int? {
+        guard let instance = NISafeGeometry.strictInteger(value), instance >= 1, instance <= Int(Int32.max) else { return nil }
         return instance
     }
 
-    private func validateToken(
-        _ value: String,
-        kind: String
-    ) throws {
-        guard !value.isEmpty else {
-            throw NIBridgeSecurityError("invalid_request", "malformed \(kind)")
-        }
+    private static func tokenError(_ value: String, kind: String) -> NIBridgeError? {
+        NILayoutValidation.validIdentifier(value) ? nil : NIBridgeError("invalid_request", "malformed \(kind)")
     }
 
-    func strictInteger(_ value: Any?) -> Int? {
-        guard
-            let number = value as? NSNumber,
-            CFGetTypeID(number) != CFBooleanGetTypeID()
-        else {
-            return nil
-        }
-        let doubleValue = number.doubleValue
-        guard
-            doubleValue.isFinite,
-            doubleValue.rounded(.towardZero) == doubleValue,
-            doubleValue >= Double(Int.min),
-            doubleValue <= Double(Int.max)
-        else {
-            return nil
-        }
-        return Int(doubleValue)
-    }
-
-    private func isJSONValue(_ value: Any) -> Bool {
+    private static func isJSONValue(_ value: Any) -> Bool {
         if value is NSNull || value is String {
             return true
         }

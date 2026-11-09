@@ -1,16 +1,39 @@
 import CoreFoundation
+import CoreGraphics
 import Foundation
 
-struct NISafeRectValues: Equatable {
-    let x: Double
-    let y: Double
-    let width: Double
-    let height: Double
-    let cornerRadii: NICornerRadii
+struct IslandRect: Equatable {
+    var x: CGFloat
+    var y: CGFloat
+    var width: CGFloat
+    var height: CGFloat
+    var cornerRadii: NICornerRadii
+
+    var cgRect: CGRect {
+        CGRect(x: x, y: y, width: width, height: height)
+    }
+
+    /// Whether `point` falls inside this rect and its rounded corners.
+    func contains(_ point: CGPoint) -> Bool {
+        cornerRadii.contains(point, in: cgRect)
+    }
+
+    /// Whether this rounded rect covers a box of `size` at the origin, corners included.
+    func containsBox(_ size: CGSize) -> Bool {
+        let right = x + width
+        let bottom = y + height
+        guard x <= 0, y <= 0, right >= size.width, bottom >= size.height else { return false }
+        let radii = cornerRadii
+        return (radii.topLeft <= 0 || x + radii.topLeft <= 0 || y + radii.topLeft <= 0) &&
+            (radii.topRight <= 0 || right - radii.topRight >= size.width || y + radii.topRight <= 0) &&
+            (radii.bottomRight <= 0 || right - radii.bottomRight >= size.width || bottom - radii.bottomRight >= size.height) &&
+            (radii.bottomLeft <= 0 || x + radii.bottomLeft <= 0 || bottom - radii.bottomLeft >= size.height)
+    }
 }
 
+/// Strict readers for bridge JSON: a boolean is never a number, and numbers are finite.
 enum NISafeGeometry {
-    static func parseRect(_ value: [String: Any]) -> NISafeRectValues? {
+    static func parseRect(_ value: [String: Any]) -> IslandRect? {
         guard
             let x = strictNumber(value["x"]),
             let y = strictNumber(value["y"]),
@@ -42,7 +65,7 @@ enum NISafeGeometry {
             return nil
         }
 
-        return NISafeRectValues(
+        return IslandRect(
             x: x,
             y: y,
             width: width,
@@ -64,5 +87,34 @@ enum NISafeGeometry {
             return nil
         }
         return number.doubleValue.isFinite ? number.doubleValue : nil
+    }
+
+    /// `value` as an array of exactly `count` finite numbers.
+    static func numbers(_ value: Any?, count: Int) -> [CGFloat]? {
+        guard let list = value as? [Any], list.count == count else { return nil }
+        let numbers = list.compactMap(strictNumber).map { CGFloat($0) }
+        return numbers.count == count ? numbers : nil
+    }
+
+    static func strictInteger(_ value: Any?) -> Int? {
+        guard
+            let number = strictNumber(value),
+            number.rounded(.towardZero) == number,
+            number >= Double(Int.min),
+            number <= Double(Int.max)
+        else {
+            return nil
+        }
+        return Int(number)
+    }
+
+    static func strictBool(_ value: Any?) -> Bool? {
+        guard
+            let number = value as? NSNumber,
+            CFGetTypeID(number) == CFBooleanGetTypeID()
+        else {
+            return nil
+        }
+        return number.boolValue
     }
 }

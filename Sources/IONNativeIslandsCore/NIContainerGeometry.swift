@@ -4,51 +4,62 @@ enum NIContainerGeometry {
     static func calibratedScrollOffset(
         nativeOffset: CGPoint,
         zoom: CGFloat,
-        bias: CGPoint
+        bias: CGPoint,
+        maxDomOffset: CGPoint,
+        maxNativeOffset: CGPoint
     )
         -> CGPoint {
         guard zoom > 0 else { return .zero }
         return CGPoint(
-            x: nativeOffset.x / zoom - bias.x,
-            y: nativeOffset.y / zoom - bias.y
+            x: clampCeilingSlack(
+                calibrated: nativeOffset.x / zoom - bias.x,
+                bias: bias.x,
+                maxDom: maxDomOffset.x,
+                maxNative: maxNativeOffset.x
+            ),
+            y: clampCeilingSlack(
+                calibrated: nativeOffset.y / zoom - bias.y,
+                bias: bias.y,
+                maxDom: maxDomOffset.y,
+                maxNative: maxNativeOffset.y
+            )
         )
     }
 
-    static func screenRect(
-        x: CGFloat,
-        y: CGFloat,
-        width: CGFloat,
-        height: CGFloat,
-        zoom: CGFloat,
-        offset: CGPoint
+    /// A native scroll range at most 2.5 points longer than the page's is rounding, not content, so
+    /// past the page's last offset the difference is taken back.
+    private static func clampCeilingSlack(
+        calibrated: CGFloat,
+        bias: CGFloat,
+        maxDom: CGFloat,
+        maxNative: CGFloat
     )
-        -> CGRect {
-        CGRect(
-            x: x * zoom - offset.x,
-            y: y * zoom - offset.y,
-            width: width * zoom,
-            height: height * zoom
-        )
+        -> CGFloat {
+        let slack = maxNative - maxDom
+        guard slack > 0, slack <= 2.5, calibrated > maxDom else {
+            return calibrated
+        }
+        let unabsorbed = max(0, min(slack - bias, slack))
+        return max(maxDom, calibrated - unabsorbed)
     }
 
+    /// `rect` in the WebView's points: moved back by the scrollers it sits in, zoomed, and moved back
+    /// by the document's scroll when it is in document coordinates.
     static func screenRect(
-        x: CGFloat,
-        y: CGFloat,
-        width: CGFloat,
-        height: CGFloat,
+        _ rect: IslandRect,
         coordinateSpace: NICoordinateSpace,
         nestedOffset: CGPoint,
         zoom: CGFloat,
         rootOffset: CGPoint
     )
-        -> CGRect {
-        screenRect(
-            x: x - nestedOffset.x,
-            y: y - nestedOffset.y,
-            width: width,
-            height: height,
-            zoom: zoom,
-            offset: coordinateSpace == .document ? rootOffset : .zero
+        -> IslandRect {
+        let offset = coordinateSpace == .document ? rootOffset : .zero
+        return IslandRect(
+            x: (rect.x - nestedOffset.x) * zoom - offset.x,
+            y: (rect.y - nestedOffset.y) * zoom - offset.y,
+            width: rect.width * zoom,
+            height: rect.height * zoom,
+            cornerRadii: rect.cornerRadii.scaled(by: zoom)
         )
     }
 }
