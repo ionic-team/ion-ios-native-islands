@@ -8,8 +8,8 @@
         func testPositiveFractionalDimensionsRemainVisible() throws {
             let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 100, height: 100))
             let container = NativeIslandsContainer(frame: window.bounds)
-            window.addSubview(container)
             let webView = WKWebView(frame: container.bounds)
+            window.addSubview(webView)
             container.attach(webView: webView)
             defer { container.detachWebView() }
             let content = UIView()

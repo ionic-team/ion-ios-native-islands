@@ -395,9 +395,9 @@
             let path = try XCTUnwrap(mask.path)
             XCTAssertFalse(path.contains(container.convert(CGPoint(x: 100, y: 30), to: contentHost), using: .evenOdd))
             XCTAssertTrue(path.contains(container.convert(CGPoint(x: 100, y: 90), to: contentHost), using: .evenOdd))
-            let webTarget = try XCTUnwrap(container.hitTest(CGPoint(x: 100, y: 30), with: nil))
+            let webTarget = try XCTUnwrap(webView.hitTest(CGPoint(x: 100, y: 30), with: nil))
             XCTAssertTrue(webTarget === webView || webTarget.isDescendant(of: webView))
-            XCTAssertTrue(container.hitTest(CGPoint(x: 100, y: 90), with: nil) === map)
+            XCTAssertTrue(webView.hitTest(CGPoint(x: 100, y: 90), with: nil) === map)
         }
 
         func testOverlappingUnderlaysKeepNativeOrderAndRouteHigherWebExclusion() throws {
@@ -461,10 +461,10 @@
             XCTAssertTrue(container.underlayPlane.subviews[1] === optionsHost)
             XCTAssertTrue(container.hosts["tabs"]?.view.superview === container.overlayPlane)
             XCTAssertNil(optionsHost.layer.mask)
-            XCTAssertTrue(container.hitTest(CGPoint(x: 100, y: 390), with: nil) === options)
-            XCTAssertTrue(container.hitTest(CGPoint(x: 100, y: 200), with: nil) === preview)
-            XCTAssertTrue(container.hitTest(CGPoint(x: 100, y: 810), with: nil) === tabs)
-            let webTarget = try XCTUnwrap(container.hitTest(CGPoint(x: 100, y: 450), with: nil))
+            XCTAssertTrue(webView.hitTest(CGPoint(x: 100, y: 390), with: nil) === options)
+            XCTAssertTrue(webView.hitTest(CGPoint(x: 100, y: 200), with: nil) === preview)
+            XCTAssertTrue(webView.hitTest(CGPoint(x: 100, y: 810), with: nil) === tabs)
+            let webTarget = try XCTUnwrap(webView.hitTest(CGPoint(x: 100, y: 450), with: nil))
             XCTAssertTrue(webTarget === webView || webTarget.isDescendant(of: webView))
             XCTAssertFalse(webTarget === optionsHost || webTarget.isDescendant(of: optionsHost))
             XCTAssertFalse(webTarget === previewHost || webTarget.isDescendant(of: previewHost))

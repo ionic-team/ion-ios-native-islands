@@ -175,7 +175,10 @@
                 exclusions: [:],
                 cutouts: [:]
             )
-            container.setCompositingActive(true, canvasColor: NICanvasColor(snapshot.canvasColor)?.uiColor)
+            container.setCompositingActive(
+                shown.contains { $0.component.plane == .underlay },
+                canvasColor: NICanvasColor(snapshot.canvasColor)?.uiColor
+            )
             launch.show(shown, canvasColor: snapshot.canvasColor)
         }
 

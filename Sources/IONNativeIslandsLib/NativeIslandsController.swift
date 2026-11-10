@@ -65,18 +65,8 @@
             if let webView {
                 self.webView = webView
             }
-            guard
-                !containerInstalled,
-                let webView = self.webView,
-                let parent = webView.superview
-            else {
-                return
-            }
-            let index = parent.subviews.firstIndex(of: webView) ?? parent.subviews.count
-            container.frame = webView.frame
-            container.autoresizingMask = webView.autoresizingMask
+            guard !containerInstalled, let webView = self.webView else { return }
             container.attach(webView: webView)
-            parent.insertSubview(container, at: min(index, parent.subviews.count))
             containerInstalled = true
             NativeIslandsScenes.register(webView: webView, scene: container)
             container.onIslandVisibility = { [weak islands] id, visible in
@@ -206,7 +196,6 @@
                     NativeIslandsScenes.unregister(webView: webView)
                 }
                 self.container.detachWebView()
-                self.container.removeFromSuperview()
                 self.containerInstalled = false
             }
         }
@@ -273,7 +262,10 @@
             for (id, scrollFailure) in failures where scrollFailure.kind != .missing {
                 islands.reportError(id: id, reason: scrollFailure.reason)
             }
-            container.setCompositingActive(accepted.contains { $0.active }, canvasColor: NICanvasColor(layout.canvasColor)?.uiColor)
+            container.setCompositingActive(
+                accepted.contains { $0.active && $0.plane == .underlay },
+                canvasColor: NICanvasColor(layout.canvasColor)?.uiColor
+            )
             guard missing.isEmpty else {
                 let reasons = Set(missing.values.map(\.reason)).sorted().joined(separator: ", ")
                 let ids = missing.keys.sorted().map { "'\($0)'" }.joined(separator: ", ")
@@ -290,9 +282,7 @@
         )
             -> Bool {
             !components.contains { $0.0.active && $0.0.rect != nil } ||
-                (containerInstalled &&
-                    container.superview != nil &&
-                    webView?.superview === container)
+                (containerInstalled && webView != nil && container.superview === webView)
         }
 
         /// Runs `work` on the main thread after earlier calls and, with a fence, after its web commit.

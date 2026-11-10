@@ -8,8 +8,8 @@
         func testAPaneIsPaintedWhereThePageSaysAmongTheIslandsUnderTheWebView() throws {
             let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 874))
             let container = NativeIslandsContainer(frame: window.bounds)
-            window.addSubview(container)
             let webView = WKWebView(frame: container.bounds)
+            window.addSubview(webView)
             container.attach(webView: webView)
             defer { container.detachWebView() }
             container.registerIsland(id: "inside", view: UIView(), accessibility: .native)
@@ -72,8 +72,8 @@
             }
             let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 874))
             let container = NativeIslandsContainer(frame: window.bounds)
-            window.addSubview(container)
             let webView = WKWebView(frame: container.bounds)
+            window.addSubview(webView)
             container.attach(webView: webView)
             defer { container.detachWebView() }
 

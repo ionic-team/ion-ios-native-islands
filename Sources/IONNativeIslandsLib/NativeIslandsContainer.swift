@@ -17,15 +17,11 @@
         static let webKitScanLimit = 4000
     }
 
-    /// Wraps the WebView with the two planes islands are placed in: under it, inside its scroll view,
-    /// and over it.
+    /// Holds the two planes islands are placed in: one under the page, inside the WebView's scroll
+    /// view, and one over it. The container is the WebView's top subview.
     final class NativeIslandsContainer: UIView {
-        /// The WebView as the host app had it, restored on detach.
+        /// The WebView's backgrounds as the host app had them, restored when compositing ends.
         private struct WebViewOrigin {
-            weak var parent: UIView?
-            var index: Int
-            var frame: CGRect
-            var autoresizing: UIView.AutoresizingMask
             var opaque: Bool
             var background: UIColor?
             var scrollBackground: UIColor?
@@ -68,19 +64,15 @@
                 follow(innerScroll.componentIDs(affectedBy: id))
             }
             webViewOrigin = WebViewOrigin(
-                parent: webView.superview,
-                index: webView.superview?.subviews.firstIndex(of: webView) ?? 0,
-                frame: webView.frame,
-                autoresizing: webView.autoresizingMask,
                 opaque: webView.isOpaque,
                 background: webView.backgroundColor,
                 scrollBackground: webView.scrollView.backgroundColor
             )
 
             backgroundColor = .clear
-            webView.frame = bounds
-            webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-            addSubview(webView)
+            frame = webView.bounds
+            autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            webView.addSubview(self)
 
             underlayPlane.frame = CGRect(x: 0, y: 0, width: 1, height: 1)
             underlayPlane.backgroundColor = .clear
@@ -117,14 +109,9 @@
             motions.onFrame = nil
             underlayPlane.removeFromSuperview()
             overlayPlane.removeFromSuperview()
+            removeFromSuperview()
 
             guard let webView, let origin = webViewOrigin else { return }
-            webView.removeFromSuperview()
-            if let parent = origin.parent {
-                parent.insertSubview(webView, at: min(origin.index, parent.subviews.count))
-            }
-            webView.frame = origin.frame
-            webView.autoresizingMask = origin.autoresizing
             restoreBackground(of: webView, from: origin)
             self.webView = nil
         }
@@ -218,6 +205,7 @@
                 webView?.scrollView.insertSubview(underlayPlane, at: 0)
             }
             webView?.scrollView.sendSubviewToBack(underlayPlane)
+            webView?.bringSubviewToFront(self)
             bringSubviewToFront(overlayPlane)
             updateDocumentTransform()
             updateRootTrackedGeometry()
@@ -271,16 +259,13 @@
             with event: UIEvent?
         )
             -> UIView? {
-            guard webView != nil else {
-                return super.hitTest(point, with: event)
+            // Nil leaves the touch to the page under this view.
+            guard webView != nil, !inLeadingEdge(point),
+                  let id = island(at: point, in: motions.frame()), let target = hosts[id]?.view
+            else {
+                return nil
             }
-            guard !inLeadingEdge(point) else {
-                return webHitTest(point, event: event)
-            }
-            if let id = island(at: point, in: motions.frame()), let target = hosts[id]?.view {
-                return target.hitTest(convert(point, to: target), with: event) ?? target
-            }
-            return webHitTest(point, event: event)
+            return target.hitTest(convert(point, to: target), with: event) ?? target
         }
 
         /// The island that owns a touch at `point`: the topmost one under it, unless that one is not
@@ -303,11 +288,6 @@
                 return component.interactive && !excluded ? id : nil
             }
             return nil
-        }
-
-        private func webHitTest(_ point: CGPoint, event: UIEvent?) -> UIView {
-            guard let webView else { return self }
-            return webView.hitTest(convert(point, to: webView), with: event) ?? webView
         }
 
         /// Touches at the leading edge go to the page, for swipe-back in the page's router. The home
