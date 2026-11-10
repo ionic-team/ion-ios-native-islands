@@ -68,7 +68,6 @@
             guard !containerInstalled, let webView = self.webView else { return }
             container.attach(webView: webView)
             containerInstalled = true
-            NativeIslandsScenes.register(webView: webView, scene: container)
             container.onIslandVisibility = { [weak islands] id, visible in
                 islands?.setViewportVisible(visible, id: id)
             }
@@ -192,9 +191,6 @@
             onMain {
                 self.dropQueuedWork()
                 self.islands.dispose()
-                if let webView = self.webView {
-                    NativeIslandsScenes.unregister(webView: webView)
-                }
                 self.container.detachWebView()
                 self.containerInstalled = false
             }
