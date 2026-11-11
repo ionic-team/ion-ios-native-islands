@@ -260,20 +260,11 @@
         )
             -> UIView? {
             // Nil leaves the touch to the page under this view.
-            guard webView != nil, !inLeadingEdge(point),
-                  let id = island(at: point, in: motions.frame()), let host = hosts[id]
-            else {
-                return nil
-            }
-            // Only the island's own views take touches: one it declines (beside a floating tab bar,
-            // say) reaches the page, not the frames the host wraps it in.
-            let hit = host.view.hitTest(convert(point, to: host.view), with: event)
-            return hit.flatMap { $0 !== host.body && $0.isDescendant(of: host.body) ? $0 : nil }
-        }
-
-        /// The island that owns a touch at `point`: the topmost one under it, unless that one is not
-        /// interactive or the page excludes the point. Nil leaves the touch to the page.
-        private func island(at point: CGPoint, in frame: NIMotionFrame) -> String? {
+            guard webView != nil, !inLeadingEdge(point) else { return nil }
+            let frame = motions.frame()
+            // The topmost island under the point owns the touch, unless it is not interactive or the
+            // page excludes the point. Only its own views take it: one it declines (beside a floating
+            // tab bar, say) goes to whatever lies under it, not to the frames the host wraps it in.
             for id in order.reversed() {
                 guard
                     let host = hosts[id],
@@ -288,7 +279,11 @@
                 let excluded = component.exclusions.contains {
                     !frame.fadedOut($0.motionPath) && screenIslandRect($0, in: frame).contains(point)
                 }
-                return component.interactive && !excluded ? id : nil
+                guard component.interactive, !excluded else { return nil }
+                if let hit = host.view.hitTest(convert(point, to: host.view), with: event),
+                   hit !== host.body, hit.isDescendant(of: host.body) {
+                    return hit
+                }
             }
             return nil
         }

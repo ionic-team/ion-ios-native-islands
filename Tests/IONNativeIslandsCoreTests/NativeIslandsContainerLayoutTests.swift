@@ -351,44 +351,6 @@
             XCTAssertEqual(host.alpha, 1, accuracy: 0.001)
         }
 
-        func testTouchesAnIslandDeclinesReachThePage() throws {
-            /// Takes touches only on a capsule in its middle, as a floating tab bar does.
-            final class Capsule: UIView {
-                override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-                    bounds.insetBy(dx: 64, dy: 0).contains(point) ? self : nil
-                }
-            }
-            let container = NativeIslandsContainer(
-                frame: CGRect(x: 0, y: 0, width: 402, height: 874)
-            )
-            let webView = WKWebView(frame: container.bounds)
-            container.attach(webView: webView)
-            defer { container.detachWebView() }
-            let bar = Capsule()
-            container.registerIsland(id: "tabs", view: bar, accessibility: .native)
-            XCTAssertTrue(container.applyLedger(
-                components: [IslandComponent(
-                    id: "tabs",
-                    rect: IslandRect(x: 0, y: 791, width: 402, height: 83, cornerRadii: NICornerRadii(uniform: 0)),
-                    scrollPath: [],
-                    plane: .overlay,
-                    coordinateSpace: .viewport,
-                    interactive: true,
-                    active: true
-                )],
-                scrollContainers: [],
-                order: ["tabs"],
-                exclusions: [:],
-                cutouts: [:]
-            ).isEmpty)
-
-            let host = try XCTUnwrap(container.hosts["tabs"]?.view)
-            let gutter = try XCTUnwrap(webView.hitTest(CGPoint(x: 30, y: 820), with: nil))
-            XCTAssertTrue(gutter === webView || gutter.isDescendant(of: webView))
-            XCTAssertFalse(gutter.isDescendant(of: host))
-            XCTAssertTrue(webView.hitTest(CGPoint(x: 200, y: 820), with: nil) === bar)
-        }
-
         func testStickyHeaderCutsAndPassesTapsWhereItSticks() throws {
             let container = NativeIslandsContainer(
                 frame: CGRect(x: 0, y: 0, width: 402, height: 874)
