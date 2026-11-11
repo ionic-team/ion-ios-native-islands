@@ -133,7 +133,8 @@
                 if layer.bounds.size == CGSize(width: 1, height: 1), layer.transform.m42 == sentinelY {
                     return layer
                 }
-                for sublayer in layer.sublayers ?? [] {
+                // The sentinel paints over everything, so its layer is among the last: look there first.
+                for sublayer in (layer.sublayers ?? []).reversed() {
                     if let found = find(sublayer) {
                         return found
                     }
