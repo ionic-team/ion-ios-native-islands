@@ -261,11 +261,14 @@
             -> UIView? {
             // Nil leaves the touch to the page under this view.
             guard webView != nil, !inLeadingEdge(point),
-                  let id = island(at: point, in: motions.frame()), let target = hosts[id]?.view
+                  let id = island(at: point, in: motions.frame()), let host = hosts[id]
             else {
                 return nil
             }
-            return target.hitTest(convert(point, to: target), with: event) ?? target
+            // Only the island's own views take touches: one it declines (beside a floating tab bar,
+            // say) reaches the page, not the frames the host wraps it in.
+            let hit = host.view.hitTest(convert(point, to: host.view), with: event)
+            return hit.flatMap { $0 !== host.body && $0.isDescendant(of: host.body) ? $0 : nil }
         }
 
         /// The island that owns a touch at `point`: the topmost one under it, unless that one is not
