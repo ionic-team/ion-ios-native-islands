@@ -10,6 +10,10 @@
             "motionStartsAtCommit": true,
             "paintFence": true,
             "motionScale": true,
+            "scrollTimelines": true,
+            "projection3d": true,
+            "stickyScrollers": true,
+            "nestedSticky": true,
         ]
 
         private let pageClock = NIPageClock()

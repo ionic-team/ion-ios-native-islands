@@ -60,6 +60,8 @@
         weak var webKitLayer: CALayer?
         /// Places the islands for the display frame shown at a native time.
         var onFrame: ((CFTimeInterval) -> Void)?
+        /// Where the scrollers that time scroll-driven motions are scrolled to.
+        var scrolled: NIScrollOffsets?
         /// Keyed by id.
         private var motions: [String: NIMotion] = [:]
         /// Keyed by `NIMotion.key`.
@@ -95,16 +97,24 @@
 
         /// The motions at page time `time`, held as they are now.
         func frame(atPageTime time: Double?) -> NIMotionFrame {
-            NIMotionFrame(motions: motions, held: heldKeys, time: time)
+            NIMotionFrame(motions: motions, held: heldKeys, time: time, scrolled: scrolled)
+        }
+
+        /// Ids of the motions scrolling `scroller` (the document when nil) moves.
+        func following(_ scroller: String?) -> Set<String> {
+            Set(motions.compactMap { $0.value.followsScroll(scroller) ? $0.key : nil })
         }
 
         /// Takes the layout's motions. One already matched keeps its correction; a new one is held
-        /// until WebKit's animation for it is found.
+        /// until WebKit's animation for it is found. Scrolling, not the clock, moves a scroll-driven
+        /// one, so it waits for nothing.
         func adopt(_ incoming: [String: NIMotion]) {
             let now = CACurrentMediaTime()
             var adopted = incoming
             for (id, motion) in incoming {
-                if let correction = syncs[motion.key]?.correction {
+                if motion.isScrollDriven {
+                    syncs[motion.key] = .pageClock
+                } else if let correction = syncs[motion.key]?.correction {
                     adopted[id]?.shiftStart(byMilliseconds: correction)
                 } else if syncs[motion.key] == nil {
                     syncs[motion.key] = .held(since: now)

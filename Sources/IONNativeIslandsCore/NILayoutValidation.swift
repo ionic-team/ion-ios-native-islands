@@ -243,6 +243,15 @@ enum NILayoutValidation {
             else {
                 throw Refusal("scroll container '\(id)' has an invalid rect")
             }
+            if scrollContainer["sticky"] != nil {
+                let space = (scrollContainer["coordinateSpace"] as? String).flatMap(NICoordinateSpace.init(rawValue:)) ?? .document
+                guard
+                    let sticky = NISticky(scrollContainer["sticky"]),
+                    sticky.fits(scrollPath: scrollPath, coordinateSpace: space)
+                else {
+                    throw Refusal("scroll container '\(id)' has an invalid sticky")
+                }
+            }
             let linear = scrollContainer["linear"]
             if linear != nil, NISafeGeometry.numbers(linear, count: 4) == nil {
                 throw Refusal("scroll container '\(id)' has an invalid linear")

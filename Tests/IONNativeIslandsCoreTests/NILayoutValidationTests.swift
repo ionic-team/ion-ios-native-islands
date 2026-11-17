@@ -40,6 +40,35 @@ final class NILayoutValidationTests: XCTestCase {
         )
     }
 
+    func testAcceptsAScrollerInAStickyBoxAndRefusesOneThatCannotStickThere() {
+        func scroller(_ sticky: [String: Any]) -> [[String: Any]] {
+            [[
+                "id": "chips",
+                "rect": ["x": 0, "y": 300, "w": 400, "h": 80],
+                "scrollPath": [],
+                "coordinateSpace": "document",
+                "contentWidth": 800,
+                "contentHeight": 80,
+                "offsetX": 0,
+                "offsetY": 0,
+                "sticky": sticky,
+            ]]
+        }
+        let bar: [String: Any] = [
+            "natural": ["x": 0, "y": 300, "w": 400, "h": 80],
+            "bounds": ["x": 0, "y": 0, "w": 400, "h": 3000],
+            "top": 0,
+        ]
+        var elsewhere = bar
+        elsewhere["scroller"] = "pane"
+
+        XCTAssertNil(NILayoutValidation.error(components: components, scrollContainers: scroller(bar), order: ["map"], exclusions: [:], cutouts: [:]))
+        XCTAssertEqual(
+            NILayoutValidation.error(components: components, scrollContainers: scroller(elsewhere), order: ["map"], exclusions: [:], cutouts: [:]),
+            "scroll container 'chips' has an invalid sticky"
+        )
+    }
+
     func testRejectsInvalidCutoutOwner() {
         XCTAssertEqual(
             NILayoutValidation.error(

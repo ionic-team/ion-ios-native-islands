@@ -92,6 +92,23 @@ enum NIMotionPayload {
             return "has an invalid direction"
         }
         guard let fill = animation["fill"] as? String, fills.contains(fill) else { return "has an invalid fill" }
+        if let timeline = animation["timeline"] { return timelineError(timeline) }
+        return nil
+    }
+
+    private static func timelineError(_ value: Any) -> String? {
+        guard let timeline = value as? [String: Any] else { return "timeline must be an object" }
+        if let scroller = timeline["scroller"] {
+            guard let id = scroller as? String, NILayoutValidation.validIdentifier(id) else {
+                return "has an invalid timeline scroller"
+            }
+        }
+        guard let axis = timeline["axis"] as? String, axis == "x" || axis == "y" else {
+            return "has an invalid timeline axis"
+        }
+        guard let start = number(timeline["start"]), let end = number(timeline["end"]), end > start else {
+            return "has an invalid timeline range"
+        }
         return nil
     }
 
@@ -212,7 +229,18 @@ enum NIMotionPayload {
             direction: (value["direction"] as? String).flatMap(NIPlaybackDirection.init(rawValue:)) ?? .normal,
             startTime: startTime,
             playbackRate: number(value["playbackRate"]) ?? 1,
-            sampledTime: number(value["sampledTime"]) ?? 0
+            sampledTime: number(value["sampledTime"]) ?? 0,
+            timeline: (value["timeline"] as? [String: Any]).flatMap(timeline)
+        )
+    }
+
+    private static func timeline(_ value: [String: Any]) -> NIMotionTimeline? {
+        guard let start = number(value["start"]), let end = number(value["end"]) else { return nil }
+        return NIMotionTimeline(
+            scroller: value["scroller"] as? String,
+            vertical: value["axis"] as? String == "y",
+            start: start,
+            end: end
         )
     }
 

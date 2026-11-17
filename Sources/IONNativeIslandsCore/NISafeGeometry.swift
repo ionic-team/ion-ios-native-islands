@@ -33,7 +33,9 @@ struct IslandRect: Equatable {
 
 /// Strict readers for bridge JSON: a boolean is never a number, and numbers are finite.
 enum NISafeGeometry {
-    static func parseRect(_ value: [String: Any]) -> IslandRect? {
+    /// A rect with an area; `allowsEmpty` also takes one with none, as a sticky box sticks at no
+    /// height of its own, carrying what overflows it.
+    static func parseRect(_ value: [String: Any], allowsEmpty: Bool = false) -> IslandRect? {
         guard
             let x = strictNumber(value["x"]),
             let y = strictNumber(value["y"]),
@@ -58,8 +60,8 @@ enum NISafeGeometry {
         }
 
         guard
-            width > 0,
-            height > 0,
+            allowsEmpty ? width >= 0 : width > 0,
+            allowsEmpty ? height >= 0 : height > 0,
             radii.allSatisfy({ $0 >= 0 })
         else {
             return nil

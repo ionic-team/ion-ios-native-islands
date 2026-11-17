@@ -108,4 +108,27 @@ final class NIContainerGeometryTests: XCTestCase {
         XCTAssertFalse(body.contains(CGPoint(x: 0.5, y: 0.5)), "its own rounded corner, turned, misses")
         XCTAssertNil(NIIslandTransform(["size": [0, 50], "matrix": [1, 0, 0, 1, 0, 0]]))
     }
+
+    func testAnIslandInPerspectiveIsDrawnAndTouchedThroughItsHomography() throws {
+        // What the web sends for a 200 x 100 card turned 60deg about y under an 800px perspective.
+        let sent: [String: Any] = [
+            "size": [200, 100],
+            "matrix": [0.6288, 0.0681, 0, 1.1214, 0, 0],
+            "perspective": [0.00121395, 0],
+        ]
+        let turned = try XCTUnwrap(NIIslandTransform(sent))
+        let rect = IslandRect(x: 143.93, y: 143.93, width: 101.19, height: 112.14, cornerRadii: NICornerRadii(uniform: 0))
+        let body = NIIslandBody(rect: rect, placed: CGSize(width: 202.38, height: 224.28), zoom: 2, transform: turned)
+        let corners = [CGPoint(x: 400, y: 0), CGPoint(x: 0, y: 200), CGPoint(x: 400, y: 200)].map { body.drawn($0) }
+        let expected = [CGPoint(x: 202.38, y: 21.9), CGPoint(x: 0, y: 224.28), CGPoint(x: 202.38, y: 202.38)]
+        for (corner, want) in zip(corners, expected) {
+            XCTAssertEqual(corner.x, want.x, accuracy: 0.1)
+            XCTAssertEqual(corner.y, want.y, accuracy: 0.1)
+        }
+        XCTAssertTrue(body.contains(CGPoint(x: 10, y: 112)))
+        XCTAssertFalse(body.contains(CGPoint(x: 196, y: 6)), "outside the far edge's slant")
+        var flawed = sent
+        flawed["perspective"] = [0.001]
+        XCTAssertNil(NIIslandTransform(flawed))
+    }
 }

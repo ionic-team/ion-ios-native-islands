@@ -4,11 +4,18 @@
     /// Placement: where each island, its clips, cuts and tints are drawn for one motion frame.
     extension NativeIslandsContainer {
         func updateRootTrackedGeometry() {
-            follow(components.filter { _, component in
+            let timed = motions.following(nil)
+            follow(components.filter { id, component in
                 component.plane == .overlay || component.coordinateSpace == .viewport ||
                     component.sticky.map { $0.scroller == nil } == true ||
-                    (component.cutouts + component.tints + component.clips).contains(where: followsRoot)
+                    (component.cutouts + component.tints + component.clips).contains(where: followsRoot) ||
+                    carries(component, id: id, onAnyOf: timed)
             }.map(\.key))
+        }
+
+        /// The islands `motions` move, fade or clip.
+        func componentIDs(movedBy motions: Set<String>) -> [String] {
+            components.compactMap { carries($0.value, id: $0.key, onAnyOf: motions) ? $0.key : nil }
         }
 
         /// Moves `ids` and every pane after a scroll, and reports what came into or left view.
@@ -152,7 +159,7 @@
         func screenIslandRect(_ region: IslandRegion, in frame: NIMotionFrame) -> IslandRect {
             var rect = region.rect
             if let sticky = region.sticky {
-                let shift = sticky.offset(in: stickyView(sticky))
+                let shift = sticky.offset(in: innerScroll.stickyView(sticky))
                 rect.x += shift.dx
                 rect.y += shift.dy
             }
@@ -162,20 +169,6 @@
                 nestedOffset: innerScroll.offset(path: region.scrollPath),
                 zoom: webView?.scrollView.zoomScale ?? 1,
                 rootOffset: webView?.scrollView.contentOffset ?? .zero
-            )
-        }
-
-        private func stickyView(_ sticky: NISticky) -> CGRect {
-            if let scroller = sticky.scroller {
-                return innerScroll.visibleContent(containerID: scroller) ?? .zero
-            }
-            guard let scrollView = webView?.scrollView, scrollView.zoomScale > 0 else { return .zero }
-            let zoom = scrollView.zoomScale
-            return CGRect(
-                x: scrollView.contentOffset.x / zoom,
-                y: scrollView.contentOffset.y / zoom,
-                width: scrollView.bounds.width / zoom,
-                height: scrollView.bounds.height / zoom
             )
         }
 

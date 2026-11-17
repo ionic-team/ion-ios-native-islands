@@ -116,7 +116,7 @@
         /// Draws the body as `shape` says, in the host's points.
         func draw(_ shape: NIIslandBody) {
             let bounds = CGRect(origin: .zero, size: shape.size)
-            body.transform = shape.transform
+            body.layer.transform = Self.layerTransform(shape)
             body.bounds = bounds
             // Autoresizing rounds to whole pixels; a hairline island keeps its fractional size.
             body.subviews.forEach { $0.frame = bounds }
@@ -135,6 +135,22 @@
             bodyMask.path = shape.radii.path(in: bounds)
             layer.mask = bodyMask
             CATransaction.commit()
+        }
+
+        /// `shape`'s drawing as a Core Animation transform: its homography, for a layer that moves
+        /// points as rows.
+        private static func layerTransform(_ shape: NIIslandBody) -> CATransform3D {
+            let affine = shape.transform
+            var matrix = CATransform3DIdentity
+            matrix.m11 = affine.a
+            matrix.m12 = affine.b
+            matrix.m21 = affine.c
+            matrix.m22 = affine.d
+            matrix.m41 = affine.tx
+            matrix.m42 = affine.ty
+            matrix.m14 = shape.perspective.x
+            matrix.m24 = shape.perspective.y
+            return matrix
         }
 
         func applyTints(_ tints: [(rect: IslandRect, color: CGColor)]) {
@@ -191,7 +207,7 @@
             let targetFrame = view.frame
             let targetRadius = body.layer.cornerRadius
             // A body the page draws turned or scaled keeps its own box; one drawn square fills the host.
-            let fills = body.transform.isIdentity
+            let fills = CATransform3DIsIdentity(body.layer.transform)
             let delta = max(
                 abs(origin.frame.minX - targetFrame.minX),
                 abs(origin.frame.minY - targetFrame.minY),

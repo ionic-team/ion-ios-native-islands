@@ -305,4 +305,55 @@ final class NIMotionTests: XCTestCase {
         endless.iterations = Double.infinity
         XCTAssertNil(NIMotion(id: "m", animations: [move, endless]).pageEnd, "a motion that never ends")
     }
+
+    func testAScrollDrivenMotionIsTimedByItsScrollersOffsetNotTheClock() {
+        let parallax = NIMotionAnimation(
+            channel: .translate,
+            keyframes: [
+                NIMotionKeyframe(offset: 0, value: [0, 50], easing: .linear),
+                NIMotionKeyframe(offset: 1, value: [0, -50], easing: .linear),
+            ],
+            duration: 95,
+            startTime: 2.5,
+            sampledTime: 47.5,
+            timeline: NIMotionTimeline(scroller: "feed", vertical: true, start: 500, end: 900)
+        )
+        let motion = NIMotion(id: "parallax", animations: [parallax])
+        func scrolled(to offset: Double) -> NIScrollOffsets {
+            { $0.scroller == "feed" ? offset : nil }
+        }
+
+        XCTAssertEqual(motion.offset(at: 1000, scrolled: scrolled(to: 700)).y, 0, accuracy: 1e-9)
+        XCTAssertEqual(motion.offset(at: 1000, scrolled: scrolled(to: 890)).y, -50, accuracy: 1e-9)
+        XCTAssertEqual(motion.offset(at: 1000, scrolled: scrolled(to: 2000)).y, -50, accuracy: 1e-9)
+        XCTAssertEqual(motion.offset(at: 5000).y, 0, accuracy: 1e-9)
+        XCTAssertTrue(motion.followsScroll("feed"))
+        XCTAssertFalse(motion.followsScroll(nil))
+        XCTAssertFalse(motion.runs(after: 0))
+        XCTAssertNil(parallax.pageSpan())
+    }
+
+    func testALayoutsScrollTimelineIsReadAndChecked() {
+        func motions(_ timeline: [String: Any]) -> [[String: Any]] {
+            [[
+                "id": "motion-1",
+                "animations": [[
+                    "channel": "translate",
+                    "keyframes": [["offset": 0, "value": [0, 0]], ["offset": 1, "value": [0, 10]]],
+                    "delay": 0, "endDelay": 0, "duration": 100, "iterations": 1, "iterationStart": 0,
+                    "direction": "normal", "fill": "both", "startTime": 0, "playbackRate": 1, "sampledTime": 0,
+                    "timeline": timeline,
+                ]],
+            ]]
+        }
+        let valid = motions(["axis": "y", "start": 0, "end": 600])
+        XCTAssertNil(NIMotionPayload.validate(valid).error)
+        XCTAssertEqual(
+            NIMotionPayload.parse(valid)["motion-1"]?.animations.first?.timeline,
+            NIMotionTimeline(scroller: nil, vertical: true, start: 0, end: 600)
+        )
+        XCTAssertNotNil(NIMotionPayload.validate(motions(["axis": "z", "start": 0, "end": 600])).error)
+        XCTAssertNotNil(NIMotionPayload.validate(motions(["axis": "x", "start": 600, "end": 600])).error)
+        XCTAssertNotNil(NIMotionPayload.validate(motions(["scroller": 3, "axis": "x", "start": 0, "end": 600])).error)
+    }
 }

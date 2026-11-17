@@ -47,13 +47,15 @@
         var motionOrigins: [CGPoint] = []
         /// The linear part of the transforms at and above the scroller, applied to its scroll offset.
         var linear: CGAffineTransform = .identity
+        /// The sticky box the scroller sits in; `rect` is where it sits unstuck.
+        var sticky: NISticky?
 
         var scrollport: IslandRegion {
             IslandRegion(
                 rect: rect,
                 scrollPath: scrollPath,
                 coordinateSpace: coordinateSpace,
-                sticky: nil,
+                sticky: sticky,
                 motionPath: motionPath,
                 motionOrigins: motionOrigins
             )
@@ -239,7 +241,8 @@
                     motionOrigins: NIMotionPayload.origins(value["motionOrigins"]),
                     linear: NISafeGeometry.numbers(value["linear"], count: 4).map {
                         CGAffineTransform(a: $0[0], b: $0[1], c: $0[2], d: $0[3], tx: 0, ty: 0)
-                    } ?? .identity
+                    } ?? .identity,
+                    sticky: NISticky(value["sticky"])
                 )
             }
         }
@@ -304,7 +307,7 @@
             from value: [String: Any]?
         )
             -> IslandRect? {
-            value.flatMap(NISafeGeometry.parseRect)
+            value.flatMap { NISafeGeometry.parseRect($0) }
         }
     }
 #endif

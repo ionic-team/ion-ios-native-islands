@@ -26,7 +26,7 @@ struct NIMotionSamples {
 
 extension NIMotionAnimation {
     func pageSpan() -> NIMotionSpan? {
-        guard playbackRate.isFinite, playbackRate != 0, duration > 0, keyframes.count >= 2 else { return nil }
+        guard timeline == nil, playbackRate.isFinite, playbackRate != 0, duration > 0, keyframes.count >= 2 else { return nil }
         let repeats = iterations.isInfinite
         let begin: Double
         let length: Double

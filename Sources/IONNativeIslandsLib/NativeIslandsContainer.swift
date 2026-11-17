@@ -59,9 +59,18 @@
             motions.onFrame = { [weak self] frameTime in
                 self?.placeIslands(at: frameTime)
             }
+            motions.scrolled = { [weak self] timeline in
+                guard let self else { return nil }
+                guard let scroller = timeline.scroller else {
+                    guard let scrollView = self.webView?.scrollView, scrollView.zoomScale > 0 else { return nil }
+                    let offset = timeline.vertical ? scrollView.contentOffset.y : scrollView.contentOffset.x
+                    return Double(offset / scrollView.zoomScale)
+                }
+                return innerScroll.scrollOffset(containerID: scroller).map { Double(timeline.vertical ? $0.y : $0.x) }
+            }
             innerScroll.onChange = { [weak self] id in
                 guard let self else { return }
-                follow(innerScroll.componentIDs(affectedBy: id))
+                follow(innerScroll.componentIDs(affectedBy: id) + componentIDs(movedBy: motions.following(id)))
             }
             webViewOrigin = WebViewOrigin(
                 opaque: webView.isOpaque,
@@ -107,6 +116,7 @@
             removeAllIslands()
             motions.webKitLayer = nil
             motions.onFrame = nil
+            motions.scrolled = nil
             underlayPlane.removeFromSuperview()
             overlayPlane.removeFromSuperview()
             removeFromSuperview()

@@ -8,6 +8,8 @@ struct NIMotionFrame {
     let held: Set<String>
     /// Page milliseconds, or nil when nothing moves or the page clock is not known yet.
     let time: Double?
+    /// Where the scrollers that time scroll-driven motions are scrolled to.
+    var scrolled: NIScrollOffsets?
 
     /// The motion `id` names with the time it is drawn at, unless it is held or nothing moves.
     private func live(_ id: String) -> (motion: NIMotion, time: Double)? {
@@ -29,7 +31,7 @@ struct NIMotionFrame {
         for index in path.indices.reversed() {
             guard let (motion, time) = live(path[index]) else { continue }
             if index < origins.count, motion.scaleAnimation != nil {
-                let scale = motion.scale(at: time)
+                let scale = motion.scale(at: time, scrolled: scrolled)
                 let origin = CGPoint(x: rect.x + origins[index].x, y: rect.y + origins[index].y)
                 moved.x = origin.x + scale.width * (moved.x - origin.x)
                 moved.y = origin.y + scale.height * (moved.y - origin.y)
@@ -37,7 +39,7 @@ struct NIMotionFrame {
                 moved.height *= scale.height
                 radius *= min(scale.width, scale.height)
             }
-            let offset = motion.offset(at: time)
+            let offset = motion.offset(at: time, scrolled: scrolled)
             moved.x += offset.x
             moved.y += offset.y
         }
@@ -51,7 +53,7 @@ struct NIMotionFrame {
     func scale(_ path: [String]) -> CGSize {
         path.reduce(CGSize(width: 1, height: 1)) { scale, id in
             guard let (motion, time) = live(id), motion.scaleAnimation != nil else { return scale }
-            let next = motion.scale(at: time)
+            let next = motion.scale(at: time, scrolled: scrolled)
             return CGSize(width: scale.width * next.width, height: scale.height * next.height)
         }
     }
@@ -64,7 +66,7 @@ struct NIMotionFrame {
     }
 
     func opacity(of motion: NIMotion, at time: Double) -> Double? {
-        held.contains(motion.key) ? motion.measuredOpacity : motion.opacity(at: time)
+        held.contains(motion.key) ? motion.measuredOpacity : motion.opacity(at: time, scrolled: scrolled)
     }
 
     /// Paint faded below half its opacity no longer cuts or covers an island.

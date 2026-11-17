@@ -180,18 +180,44 @@
             (componentPaths[componentID] ?? []).compactMap { containers[$0]?.scrollport }
         }
 
-        /// How far the scrollers on `path` move what they hold on the page, each offset drawn as
-        /// the transforms at and above its scroller draw it.
+        /// How far the scrollers on `path` move what they hold on the page: each offset drawn as the
+        /// transforms at and above its scroller draw it, less how the sticky box it sits in moves it on.
         func offset(path: [String]) -> CGPoint {
             path.reduce(into: .zero) { result, id in
                 let value = drawnOffset(containerID: id)
-                result.x += value.x
-                result.y += value.y
+                let shift = containers[id].map(stuck) ?? .zero
+                result.x += value.x - shift.dx
+                result.y += value.y - shift.dy
             }
+        }
+
+        /// How the sticky box `container` sits in moves it, and what it holds, from where it is laid out.
+        private func stuck(_ container: IslandScrollContainer) -> CGVector {
+            container.sticky.map { $0.offset(in: stickyView($0)) } ?? .zero
+        }
+
+        /// What `sticky`'s scroller shows of its content now, or the document's viewport.
+        func stickyView(_ sticky: NISticky) -> CGRect {
+            if let scroller = sticky.scroller {
+                return visibleContent(containerID: scroller) ?? .zero
+            }
+            guard let scrollView = webView?.scrollView, scrollView.zoomScale > 0 else { return .zero }
+            let zoom = scrollView.zoomScale
+            return CGRect(
+                x: scrollView.contentOffset.x / zoom,
+                y: scrollView.contentOffset.y / zoom,
+                width: scrollView.bounds.width / zoom,
+                height: scrollView.bounds.height / zoom
+            )
         }
 
         private func drawnOffset(containerID: String) -> CGPoint {
             offset(containerID: containerID).applying(containers[containerID]?.linear ?? .identity)
+        }
+
+        /// How far scroller `containerID` is scrolled, in CSS px; nil when it is not in the layout.
+        func scrollOffset(containerID: String) -> CGPoint? {
+            containers[containerID] == nil ? nil : offset(containerID: containerID)
         }
 
         private func offset(containerID: String) -> CGPoint {
@@ -231,8 +257,9 @@
             path.reduce(into: .zero) { result, id in
                 guard let descriptor = containers[id] else { return }
                 let offset = CGPoint(x: descriptor.offsetX, y: descriptor.offsetY).applying(descriptor.linear)
-                result.x += offset.x
-                result.y += offset.y
+                let shift = stuck(descriptor)
+                result.x += offset.x - shift.dx
+                result.y += offset.y - shift.dy
             }
         }
 
@@ -245,8 +272,13 @@
             let rootOffset = webView.scrollView.contentOffset
             return ids.reduce(into: [:]) { values, id in
                 guard let descriptor = containers[id] else { return }
+                // WebKit draws a scroller in a sticky box where the box has stuck it.
+                let shift = stuck(descriptor)
+                var rect = descriptor.rect
+                rect.x += shift.dx
+                rect.y += shift.dy
                 let frame = NIContainerGeometry.screenRect(
-                    descriptor.rect,
+                    rect,
                     coordinateSpace: descriptor.coordinateSpace,
                     nestedOffset: descriptorOffset(path: descriptor.scrollPath),
                     zoom: zoom,

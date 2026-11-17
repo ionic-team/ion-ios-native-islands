@@ -180,6 +180,22 @@ enum NIMotionChannel: String {
     }
 }
 
+/// A scroll-driven animation's timeline: the offset, in CSS px, of `scroller` (the document's when
+/// nil) along one axis, mapped onto 0% at `start` and 100% at `end`.
+struct NIMotionTimeline: Equatable {
+    let scroller: String?
+    let vertical: Bool
+    let start: Double
+    let end: Double
+
+    func percent(at offset: Double) -> Double {
+        (offset - start) / (end - start) * 100
+    }
+}
+
+/// Where each scroll-driven motion's scroller is scrolled to, in CSS px; nil when unknown.
+typealias NIScrollOffsets = (NIMotionTimeline) -> Double?
+
 struct NIMotionKeyframe {
     let offset: Double
     let value: [Double]
@@ -198,16 +214,23 @@ struct NIMotionAnimation {
     var startTime: Double
     var playbackRate: Double = 1
     var sampledTime: Double = 0
+    /// Times the animation by scrolling: its times are then percentages of the timeline.
+    var timeline: NIMotionTimeline?
 
     private var activeDuration: Double {
         iterations.isInfinite ? .infinity : duration * iterations
     }
 
-    func localTime(_ pageTime: Double) -> Double {
-        (pageTime - startTime) * playbackRate
+    /// Its local time at `pageTime`, or, for a scroll-driven one, at the offset `scrolled` gives.
+    func localTime(_ pageTime: Double, scrolled: NIScrollOffsets? = nil) -> Double {
+        guard let timeline else { return (pageTime - startTime) * playbackRate }
+        guard let offset = scrolled?(timeline) else { return sampledTime }
+        return (timeline.percent(at: offset) - startTime) * playbackRate
     }
 
+    /// Whether the clock still moves it after `pageTime`; scrolling moves a scroll-driven one.
     func runs(after pageTime: Double) -> Bool {
+        guard timeline == nil else { return false }
         let local = localTime(pageTime)
         return playbackRate > 0 ? local < delay + activeDuration : local > 0
     }
@@ -326,18 +349,28 @@ struct NIMotion {
         animations.first { $0.channel == .scale }
     }
 
+    /// Whether scrolling moves it rather than the clock.
+    var isScrollDriven: Bool {
+        animations.contains { $0.timeline != nil }
+    }
+
+    /// Whether scrolling `scroller` (the document when nil) moves it.
+    func followsScroll(_ scroller: String?) -> Bool {
+        animations.contains { $0.timeline.map { $0.scroller == scroller } ?? false }
+    }
+
     /// The scale about this motion's origin, relative to the one the plan was drawn at.
-    func scale(at pageTime: Double) -> CGSize {
+    func scale(at pageTime: Double, scrolled: NIScrollOffsets? = nil) -> CGSize {
         guard let animation = scaleAnimation else { return CGSize(width: 1, height: 1) }
         let then = animation.value(at: animation.sampledTime)
         guard then.count == 2, then[0] > 0, then[1] > 0 else { return CGSize(width: 1, height: 1) }
-        let now = animation.value(at: animation.localTime(pageTime))
+        let now = animation.value(at: animation.localTime(pageTime, scrolled: scrolled))
         return CGSize(width: now[0] / then[0], height: now[1] / then[1])
     }
 
-    func offset(at pageTime: Double) -> CGPoint {
+    func offset(at pageTime: Double, scrolled: NIScrollOffsets? = nil) -> CGPoint {
         guard let animation = translationAnimation else { return .zero }
-        let now = animation.value(at: animation.localTime(pageTime))
+        let now = animation.value(at: animation.localTime(pageTime, scrolled: scrolled))
         let then = animation.value(at: animation.sampledTime)
         return CGPoint(x: now[0] - then[0], y: now[1] - then[1])
     }
@@ -348,8 +381,8 @@ struct NIMotion {
         return CGPoint(x: value[0], y: value[1])
     }
 
-    func opacity(at pageTime: Double) -> Double? {
-        fadeAnimation.map { min(1, max(0, $0.value(at: $0.localTime(pageTime))[0])) }
+    func opacity(at pageTime: Double, scrolled: NIScrollOffsets? = nil) -> Double? {
+        fadeAnimation.map { min(1, max(0, $0.value(at: $0.localTime(pageTime, scrolled: scrolled))[0])) }
     }
 
     /// The opacity where the layout measured the motion.

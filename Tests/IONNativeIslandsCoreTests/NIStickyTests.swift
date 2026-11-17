@@ -10,9 +10,41 @@ final class NIStickyTests: XCTestCase {
         top: 0
     )
 
+    func testAnEmptyStickyBoxIsReadAndSticksWhatOverflowsIt() {
+        // A sticky box with no height of its own still carries what overflows it as it sticks.
+        let sticky = NISticky([
+            "scroller": "pane",
+            "natural": ["x": 0, "y": 100, "w": 400, "h": 0],
+            "bounds": ["x": 0, "y": 0, "w": 400, "h": 2000],
+            "top": 0,
+        ])
+
+        XCTAssertEqual(sticky?.offset(in: CGRect(x: 0, y: 300, width: 400, height: 800)), CGVector(dx: 0, dy: 200))
+    }
+
     func testAHeaderSticksToTheTopOfItsScrollport() {
         XCTAssertEqual(header.offset(in: CGRect(x: 0, y: 0, width: 400, height: 800)), .zero)
         XCTAssertEqual(header.offset(in: CGRect(x: 0, y: 300, width: 400, height: 800)), CGVector(dx: 0, dy: 300))
+    }
+
+    func testAStickyBoxInsideAnotherSticksInsideTheBlockTheOuterOneHasMoved() {
+        // A 300 high sidebar stuck at the top until its block ends, holding a box sticking 20 below.
+        let sidebar = NISticky(
+            scroller: "pane",
+            natural: CGRect(x: 0, y: 100, width: 400, height: 300),
+            bounds: CGRect(x: 0, y: 0, width: 400, height: 600),
+            top: 0
+        )
+        let label = NISticky(
+            scroller: "pane",
+            natural: CGRect(x: 0, y: 350, width: 400, height: 40),
+            bounds: CGRect(x: 0, y: 100, width: 400, height: 300),
+            top: 20,
+            within: sidebar
+        )
+
+        XCTAssertEqual(label.offset(in: CGRect(x: 0, y: 500, width: 400, height: 800)), CGVector(dx: 0, dy: 200))
+        XCTAssertEqual(label.offset(in: CGRect(x: 0, y: 560, width: 400, height: 800)), CGVector(dx: 0, dy: 210))
     }
 
     func testAStickyBoxStaysInsideItsContainingBlock() {
