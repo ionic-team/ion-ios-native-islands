@@ -20,7 +20,9 @@ let package = Package(
         .testTarget(
             name: "IONNativeIslandsLibTests",
             dependencies: ["IONNativeIslandsLib"],
-            path: "Tests/IONNativeIslandsCoreTests"
+            path: "Tests/IONNativeIslandsCoreTests",
+            // Read from the source tree by the tests that use them.
+            exclude: ["Fixtures"]
         )
     ]
 )
