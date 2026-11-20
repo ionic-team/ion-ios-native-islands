@@ -30,7 +30,6 @@ final class NIIslandFactoryRegistry<Factory> {
                 existing.accessibility == incoming.accessibility,
                 "native component '\(type)' is already registered with different options"
             )
-            return
         }
         entries[type] = incoming
     }

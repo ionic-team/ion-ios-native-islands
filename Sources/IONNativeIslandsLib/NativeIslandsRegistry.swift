@@ -6,7 +6,7 @@
             NIIslandFactoryRegistry<() throws -> NativeIsland>()
 
         /// Registers a native component type before its custom element is mounted. A name registered
-        /// again keeps its first factory.
+        /// again replaces its factory.
         public static func register(
             componentName: String,
             accessibility: NativeIslandAccessibility = .web,
