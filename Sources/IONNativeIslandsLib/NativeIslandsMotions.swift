@@ -152,6 +152,7 @@
             }
             guard link == nil else { return }
             let link = CADisplayLink(target: NativeIslandsMotionTarget(self), selector: #selector(NativeIslandsMotionTarget.tick(_:)))
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 80, maximum: 120, preferred: 120)
             link.add(to: .main, forMode: .common)
             self.link = link
         }

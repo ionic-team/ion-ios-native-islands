@@ -203,6 +203,7 @@
 
             for (id, host) in hosts where components[id] == nil {
                 host.view.isHidden = true
+                host.view.layer.name = nil
             }
             for component in newComponents {
                 show(component, unless: innerScrollFailures[component.id] != nil, in: frame)
@@ -235,9 +236,11 @@
                 }
                 guard !failed, component.active, let rect = component.rect, rect.width > 0, rect.height > 0 else {
                     host.view.isHidden = true
+                    host.view.layer.name = nil
                     return false
                 }
                 host.view.isHidden = false
+                host.view.layer.name = component.transitionTag.map { "transition:\($0)" }
                 place(component.id, in: frame, relayout: true)
                 return true
             }

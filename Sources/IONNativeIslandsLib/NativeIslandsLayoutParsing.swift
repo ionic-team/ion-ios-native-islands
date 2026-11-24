@@ -12,6 +12,7 @@
         var opacity: CGFloat = 1
         var motionPath: [String] = []
         var portal: String?
+        var transitionTag: String?
         var motionOrigins: [CGPoint] = []
         /// How the island's own box maps onto `rect`; nil when it is drawn at `rect`.
         var transform: NIIslandTransform?
@@ -192,6 +193,7 @@
                         opacity: NISafeGeometry.strictNumber(value["opacity"]).map { CGFloat($0) } ?? 1,
                         motionPath: NIMotionPayload.path(value["motionPath"]),
                         portal: (value["portal"] as? String).flatMap { $0.isEmpty ? nil : $0 },
+                        transitionTag: (value["transitionTag"] as? String).flatMap { $0.isEmpty ? nil : $0 },
                         motionOrigins: NIMotionPayload.origins(value["motionOrigins"]),
                         transform: NIIslandTransform(value["transform"]),
                         sticky: NISticky(value["sticky"]),

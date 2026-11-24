@@ -55,6 +55,9 @@
                 if let portal = entry.component.portal {
                     item["portal"] = portal
                 }
+                if let transitionTag = entry.component.transitionTag {
+                    item["transitionTag"] = transitionTag
+                }
                 return item
             }
             guard !serializedEntries.isEmpty else { return }
@@ -98,6 +101,7 @@
                 }
                 let opacity = NISafeGeometry.strictNumber(raw["opacity"]).map { CGFloat($0) } ?? 1
                 let portal = (raw["portal"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                let transitionTag = (raw["transitionTag"] as? String).flatMap { $0.isEmpty ? nil : $0 }
                 let properties = raw["properties"] as? [String: Any] ?? [:]
                 let component = IslandComponent(
                     id: id,
@@ -108,7 +112,8 @@
                     interactive: false,
                     active: true,
                     opacity: opacity,
-                    portal: portal
+                    portal: portal,
+                    transitionTag: transitionTag
                 )
                 return Entry(component: component, type: type, properties: properties)
             }

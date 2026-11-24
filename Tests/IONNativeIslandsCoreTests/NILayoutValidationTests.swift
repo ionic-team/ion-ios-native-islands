@@ -222,6 +222,24 @@ final class NILayoutValidationTests: XCTestCase {
         XCTAssertEqual(error(42), "component 'map' has an invalid portal")
     }
 
+    func testTransitionTagIsOptionalNonEmptyStringIdentifier() {
+        func error(_ transitionTag: Any) -> String? {
+            var item = components
+            item[0]["transitionTag"] = transitionTag
+            return NILayoutValidation.error(
+                components: item,
+                order: ["map"],
+                exclusions: [:],
+                cutouts: [:]
+            )
+        }
+
+        XCTAssertNil(error("hero:card"))
+        XCTAssertNil(error(NSNull()))
+        XCTAssertEqual(error(""), "component 'map' has an invalid transitionTag")
+        XCTAssertEqual(error(42), "component 'map' has an invalid transitionTag")
+    }
+
     func testViewportComponentsAndRegionsCanSitInAPaneFixedToTheViewport() {
         var viewport = components
         viewport[0]["plane"] = "overlay"

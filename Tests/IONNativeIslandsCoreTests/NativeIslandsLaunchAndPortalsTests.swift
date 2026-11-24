@@ -212,6 +212,32 @@
             XCTAssertNil(NativeIslandsLaunchCache.load(from: store))
         }
 
+        func testLaunchCacheKeepsTheTransitionTag() throws {
+            let suiteName = "io.ionic.nativeislands.tests.\(UUID().uuidString)"
+            let store = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+            defer { store.removePersistentDomain(forName: suiteName) }
+            let card = IslandComponent(
+                id: "card",
+                rect: IslandRect(x: 20, y: 100, width: 200, height: 120, cornerRadii: NICornerRadii(uniform: 0)),
+                scrollPath: [],
+                plane: .overlay,
+                coordinateSpace: .viewport,
+                interactive: true,
+                active: true,
+                transitionTag: "hero-card"
+            )
+            NativeIslandsLaunchCache.save(
+                NativeIslandsLaunchCache.Snapshot(
+                    canvasColor: nil,
+                    order: ["card"],
+                    entries: [NativeIslandsLaunchCache.Entry(component: card, type: "acme.card", properties: [:])]
+                ),
+                to: store
+            )
+            let restored = try XCTUnwrap(NativeIslandsLaunchCache.load(from: store))
+            XCTAssertEqual(restored.entries.first?.component.transitionTag, "hero-card")
+        }
+
         func testFrozenFirstFrameRestoresOnLaunchAndHandsOffWithoutRecreate() throws {
             let type = "fixture.launchIsland"
             var created: [TrackingIsland] = []

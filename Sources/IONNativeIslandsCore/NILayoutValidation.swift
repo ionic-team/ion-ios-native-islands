@@ -172,6 +172,11 @@ enum NILayoutValidation {
            (rawPortal as? String).map(validIdentifier) != true {
             throw Refusal("component '\(id)' has an invalid portal")
         }
+        if let rawTransitionTag = component["transitionTag"],
+           !(rawTransitionTag is NSNull),
+           (rawTransitionTag as? String).map(validIdentifier) != true {
+            throw Refusal("component '\(id)' has an invalid transitionTag")
+        }
     }
 
     /// The box the component sticks with, and the shapes it shows only inside.

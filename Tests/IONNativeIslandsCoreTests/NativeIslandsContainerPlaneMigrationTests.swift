@@ -132,5 +132,54 @@
                 XCTAssertTrue(path.contains(CGPoint(x: 50, y: 50), using: .evenOdd))
             }
         }
+
+        func testTaggedIslandMarksItsHostForTransitionsOnlyWhileShown() throws {
+            let container = NativeIslandsContainer(
+                frame: CGRect(x: 0, y: 0, width: 402, height: 874)
+            )
+            let webView = WKWebView(frame: container.bounds)
+            container.attach(webView: webView)
+            defer { container.detachWebView() }
+            container.registerIsland(id: "card", view: UIView(), accessibility: .native)
+            var card = IslandComponent(
+                id: "card",
+                rect: IslandRect(x: 20, y: 100, width: 200, height: 120, cornerRadii: NICornerRadii(uniform: 0)),
+                scrollPath: [],
+                plane: .overlay,
+                coordinateSpace: .viewport,
+                interactive: true,
+                active: true,
+                transitionTag: "hero-card"
+            )
+            let apply = { (components: [IslandComponent]) in
+                container.applyLedger(
+                    components: components,
+                    scrollContainers: [],
+                    order: components.filter(\.active).map(\.id),
+                    exclusions: [:],
+                    cutouts: [:]
+                )
+            }
+            XCTAssertTrue(apply([card]).isEmpty)
+            let host = try XCTUnwrap(container.hosts["card"]?.view)
+            XCTAssertEqual(host.layer.name, "transition:hero-card")
+
+            card.transitionTag = nil
+            XCTAssertTrue(apply([card]).isEmpty)
+            XCTAssertNil(host.layer.name)
+
+            card.transitionTag = "hero-card"
+            card.active = false
+            XCTAssertTrue(apply([card]).isEmpty)
+            XCTAssertTrue(host.isHidden)
+            XCTAssertNil(host.layer.name, "a hidden island is not a transition source")
+
+            card.active = true
+            XCTAssertTrue(apply([card]).isEmpty)
+            XCTAssertEqual(host.layer.name, "transition:hero-card")
+            XCTAssertTrue(apply([]).isEmpty)
+            XCTAssertTrue(host.isHidden)
+            XCTAssertNil(host.layer.name, "nor is one the layout dropped")
+        }
     }
 #endif
