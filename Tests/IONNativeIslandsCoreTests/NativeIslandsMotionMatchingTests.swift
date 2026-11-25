@@ -46,7 +46,8 @@
                 let delegate = Loaded { loaded.fulfill() }
                 webView.navigationDelegate = delegate
                 webView.loadHTMLString("<meta name=\"viewport\" content=\"width=device-width\">", baseURL: nil)
-                wait(for: [loaded], timeout: 10)
+                // A freshly booted simulator can take 15 s to start the web process.
+                wait(for: [loaded], timeout: 60)
                 webView.navigationDelegate = nil
                 Self.pageLoaded = true
             }
