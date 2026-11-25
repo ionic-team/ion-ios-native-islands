@@ -23,7 +23,7 @@ dependencies: [
 CocoaPods:
 
 ```ruby
-pod 'IONNativeIslandsLib', '~> 1.0'
+pod 'IONNativeIslandsLib', '~> 1.0.0'
 ```
 
 ## Register a native component
